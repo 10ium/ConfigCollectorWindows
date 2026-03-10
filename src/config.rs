@@ -58,9 +58,9 @@ impl Default for TesterConfig {
         Self {
             enabled: true, // تستر به صورت پیش‌فرض فعال است
             concurrent_tests: 10, // تست 10 کانفیگ به صورت همزمان
-            timeout_secs: 6, // 6 ثانیه فرصت برای دانلود
-            // یک فایل نسبتاً سبک از سرورهای تلگرام برای تست دانلود واقعی
-            test_url: "https://desktop.telegram.org/favicon.ico".to_string(),
+            timeout_secs: 6, // 6 ثانیه فرصت برای دانلود فایل
+            // لینک اختصاصی درخواستی برای تست دانلود
+            test_url: "https://t.me/vpnclashfa/1228".to_string(),
             xray_knife_path: if cfg!(windows) {
                 "xray-knife.exe".to_string()
             } else {
@@ -89,7 +89,7 @@ pub struct AppConfig {
     pub output_new_only_enabled: bool,
     pub output_append_unique_enabled: bool,
     pub protocol_rules: BTreeMap<String, ProtocolRule>,
-    // اضافه شدن تنظیمات تستر
+    // اضافه شدن آبجکت تنظیمات تستر
     pub tester: TesterConfig,
 }
 
