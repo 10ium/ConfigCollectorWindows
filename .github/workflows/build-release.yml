@@ -1,35 +1,61 @@
 name: Build Windows Release
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: # اجازه اجرای دستی از پنل گیت‌هاب
   push:
     tags:
-      - "v*"
+      - "v*" # اجرای خودکار در صورت پوش کردن تگ جدید
 
 jobs:
   build:
+    name: Build and Release
     runs-on: windows-latest
     permissions:
-      contents: write
+      contents: write # دسترسی اجباری و حیاتی برای ساخت تگ و ریلیز جدید
 
     steps:
-      - name: Checkout
+      - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Install Rust
+      # این بخش به صورت هوشمند تصمیم می‌گیرد که چه تگی برای ریلیز بسازد
+      - name: Determine Release Tag
+        id: generate_tag
+        shell: bash
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            # اگر دولوپر دستی تگ v2.0.1 را پوش کرده باشد، از همان استفاده می‌کند
+            TAG_NAME="${GITHUB_REF#refs/tags/}"
+          else
+            # اگر اکشن به صورت دستی (دکمه Run workflow) اجرا شده باشد، یک تگ اتوماتیک می‌سازد
+            TAG_NAME="v2.0.${{ github.run_number }}"
+          fi
+          echo "TAG_NAME=$TAG_NAME" >> $GITHUB_OUTPUT
+          echo "Generated Tag: $TAG_NAME"
+
+      - name: Install Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
+
+      # اضافه کردن سیستم کش برای افزایش چشمگیر سرعت بیلد در اجراهای بعدی
+      - name: Cache Rust Dependencies
+        uses: Swatinem/rust-cache@v2
 
       - name: Build release binary
         run: cargo build --release
 
-      - name: Rename binary
+      - name: Prepare Artifact
         run: |
           mkdir dist
           copy target\release\config-collector-windows.exe dist\ConfigCollectorWindows.exe
 
-      - name: Upload release artifact
+      # ساخت ریلیز و آپلود فایل، بدون شرط‌های محدود کننده قبلی
+      - name: Create Release and Upload
         uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/')
         with:
+          tag_name: ${{ steps.generate_tag.outputs.TAG_NAME }}
+          name: Release ${{ steps.generate_tag.outputs.TAG_NAME }}
           files: dist/ConfigCollectorWindows.exe
           generate_release_notes: true
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
