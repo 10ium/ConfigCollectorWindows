@@ -1,6 +1,6 @@
 #![windows_subsystem = "windows"]
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use chrono::{DateTime, Duration as ChronoDuration, Local, Utc};
 use eframe::egui;
 use regex::Regex;
@@ -8,7 +8,7 @@ use reqwest::blocking::ClientBuilder;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
@@ -545,7 +545,7 @@ impl eframe::App for AppState {
                                     .color(egui::Color32::LIGHT_BLUE),
                             );
                             ui.horizontal(|ui| {
-                                egui::ComboBox::from_id_source("proxy_type")
+                                egui::ComboBox::from_id_salt("proxy_type")
                                     .selected_text(match self.config.proxy_type {
                                         ProxyType::None => "Direct",
                                         ProxyType::System => "System Auto",
@@ -925,9 +925,12 @@ fn run_worker(
                                     }
 
                                     channel_configs += found_in_page;
+                                    
+                                    // بررسی و ذخیره وضعیت حلقه قبل از انتقال مالکیت
+                                    let has_next = next_before.is_some();
                                     before = next_before;
 
-                                    if next_before.is_none() || found_in_page == 0 {
+                                    if !has_next || found_in_page == 0 {
                                         break; // پایان یا عدم وجود لینک
                                     }
                                 }
@@ -942,7 +945,6 @@ fn run_worker(
                     }
 
                     if channel_configs > 0 {
-                        // ذخیره در State مشترک
                         let mut g = gathered_c.lock().unwrap();
                         for (k, v) in local_gathered {
                             g.entry(k).or_default().extend(v);
