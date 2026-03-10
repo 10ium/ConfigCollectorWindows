@@ -40,6 +40,36 @@ pub struct ProtocolRule {
     pub max_count: usize, // 0 یعنی نامحدود
 }
 
+// -------------------------------------------------------------
+// تنظیمات فاز دوم: تست کانفیگ‌ها (Phase 2 Tester)
+// -------------------------------------------------------------
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TesterConfig {
+    pub enabled: bool,
+    pub concurrent_tests: usize,
+    pub timeout_secs: u64,
+    pub test_url: String,
+    pub xray_knife_path: String,
+}
+
+impl Default for TesterConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true, // تستر به صورت پیش‌فرض فعال است
+            concurrent_tests: 10, // تست 10 کانفیگ به صورت همزمان
+            timeout_secs: 6, // 6 ثانیه فرصت برای دانلود
+            // یک فایل نسبتاً سبک از سرورهای تلگرام برای تست دانلود واقعی
+            test_url: "https://desktop.telegram.org/favicon.ico".to_string(),
+            xray_knife_path: if cfg!(windows) {
+                "xray-knife.exe".to_string()
+            } else {
+                "xray-knife".to_string()
+            },
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppConfig {
@@ -59,6 +89,8 @@ pub struct AppConfig {
     pub output_new_only_enabled: bool,
     pub output_append_unique_enabled: bool,
     pub protocol_rules: BTreeMap<String, ProtocolRule>,
+    // اضافه شدن تنظیمات تستر
+    pub tester: TesterConfig,
 }
 
 impl Default for AppConfig {
@@ -90,6 +122,7 @@ impl Default for AppConfig {
             output_new_only_enabled: true,
             output_append_unique_enabled: true,
             protocol_rules,
+            tester: TesterConfig::default(),
         }
     }
 }
@@ -128,16 +161,19 @@ impl AppConfig {
                 self.delay_ms = 5000;
                 self.timeout_secs = 30;
                 self.concurrent_channels = 1;
+                self.tester.concurrent_tests = 3;
             }
             PerformanceProfile::MediumPC => {
                 self.delay_ms = 2000;
                 self.timeout_secs = 15;
                 self.concurrent_channels = 3;
+                self.tester.concurrent_tests = 10;
             }
             PerformanceProfile::StrongPC => {
                 self.delay_ms = 500;
                 self.timeout_secs = 10;
                 self.concurrent_channels = 8;
+                self.tester.concurrent_tests = 25;
             }
             PerformanceProfile::Custom => {}
         }
