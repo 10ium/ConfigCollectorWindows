@@ -11,7 +11,7 @@ use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -20,6 +20,9 @@ use std::time::{Duration, Instant};
 const APP_CONFIG_PATH: &str = "config/app_config.toml";
 const CHANNELS_PATH: &str = "config/channels.txt";
 const HISTORY_PATH: &str = "config/sent_history.json";
+const MEMORY_PATH: &str = "config/channel_memory.json"; // فایل جدید حافظه هوشمند
+
+const DEFAULT_TARGETS: &str = "@IranProxyPlus\nhttps://t.me/filembad\nhttps://t.me/persianvpnhub\nhttps://t.me/Speeds_vpn1\n@SOSkeyNET\nhttps://t.me/vasl_bashim\n@configraygan\nhttps://t.me/AR14N24B";
 
 const DEFAULT_PROTOCOLS: [&str; 27] = [
     "vmess", "vless", "trojan", "ss", "ssr", "tuic", "hysteria", "hysteria2", "hy2", "juicity",
@@ -44,10 +47,7 @@ fn generate_icon() -> egui::IconData {
     let mut rgba = Vec::with_capacity((width * height * 4) as usize);
     for _y in 0..height {
         for _x in 0..width {
-            rgba.push(30);
-            rgba.push(160);
-            rgba.push(100);
-            rgba.push(255);
+            rgba.push(30); rgba.push(160); rgba.push(100); rgba.push(255);
         }
     }
     egui::IconData { rgba, width, height }
@@ -62,7 +62,7 @@ fn main() {
         ..Default::default()
     };
     let _ = eframe::run_native(
-        "⚡ Config Collector Pro (Python-Logic Edition)",
+        "⚡ Config Collector Pro (Smart Edition)",
         options,
         Box::new(|_| Ok(Box::new(AppState::bootstrap()))),
     );
@@ -70,18 +70,12 @@ fn main() {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 enum ProxyType {
-    None,
-    System,
-    Http,
-    Socks5,
+    None, System, Http, Socks5,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 enum PerformanceProfile {
-    WeakPC,
-    MediumPC,
-    StrongPC,
-    Custom,
+    WeakPC, MediumPC, StrongPC, Custom,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -119,14 +113,14 @@ impl Default for AppConfig {
                 p.to_string(),
                 ProtocolRule {
                     enabled: true,
-                    max_count: 500,
+                    max_count: 0, // پیش‌فرض نامحدود
                 },
             );
         }
         Self {
             interval_minutes: 5,
-            max_pages_per_channel: 15,
-            lookback_days: 2,
+            max_pages_per_channel: 10, // پیش‌فرض 10 صفحه
+            lookback_days: 1, // پیش‌فرض فقط امروز (1 روز گذشته)
             proxy_type: ProxyType::System,
             proxy_host: "127.0.0.1".to_string(),
             proxy_port: 10808,
@@ -149,12 +143,7 @@ impl AppConfig {
         if let Ok(raw) = fs::read_to_string(APP_CONFIG_PATH) {
             if let Ok(mut cfg) = toml::from_str::<Self>(&raw) {
                 for p in DEFAULT_PROTOCOLS {
-                    cfg.protocol_rules
-                        .entry(p.to_string())
-                        .or_insert(ProtocolRule {
-                            enabled: true,
-                            max_count: 500,
-                        });
+                    cfg.protocol_rules.entry(p.to_string()).or_insert(ProtocolRule { enabled: true, max_count: 0 });
                 }
                 return cfg;
             }
@@ -165,32 +154,41 @@ impl AppConfig {
     }
 
     fn save(&self) -> Result<()> {
-        if let Some(parent) = Path::new(APP_CONFIG_PATH).parent() {
-            fs::create_dir_all(parent)?;
-        }
+        if let Some(parent) = Path::new(APP_CONFIG_PATH).parent() { fs::create_dir_all(parent)?; }
         fs::write(APP_CONFIG_PATH, toml::to_string_pretty(self)?)?;
         Ok(())
     }
 
     fn apply_profile_defaults(&mut self) {
         match self.performance {
-            PerformanceProfile::WeakPC => {
-                self.delay_ms = 5000;
-                self.timeout_secs = 30;
-                self.concurrent_channels = 1;
-            }
-            PerformanceProfile::MediumPC => {
-                self.delay_ms = 2000;
-                self.timeout_secs = 15;
-                self.concurrent_channels = 3;
-            }
-            PerformanceProfile::StrongPC => {
-                self.delay_ms = 500;
-                self.timeout_secs = 10;
-                self.concurrent_channels = 8;
-            }
+            PerformanceProfile::WeakPC => { self.delay_ms = 5000; self.timeout_secs = 30; self.concurrent_channels = 1; }
+            PerformanceProfile::MediumPC => { self.delay_ms = 2000; self.timeout_secs = 15; self.concurrent_channels = 3; }
+            PerformanceProfile::StrongPC => { self.delay_ms = 500; self.timeout_secs = 10; self.concurrent_channels = 8; }
             PerformanceProfile::Custom => {}
         }
+    }
+}
+
+// -------------------------------------------------------------
+// ساختار حافظه هوشمند (Smart Memory)
+// -------------------------------------------------------------
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+struct ChannelMemory {
+    last_seen_ids: BTreeMap<String, u64>,
+}
+
+impl ChannelMemory {
+    fn load() -> Self {
+        if let Ok(raw) = fs::read_to_string(MEMORY_PATH) {
+            if let Ok(v) = serde_json::from_str::<Self>(&raw) { return v; }
+        }
+        Self::default()
+    }
+
+    fn save(&self) -> Result<()> {
+        if let Some(parent) = Path::new(MEMORY_PATH).parent() { fs::create_dir_all(parent)?; }
+        fs::write(MEMORY_PATH, serde_json::to_string_pretty(self)?)?;
+        Ok(())
     }
 }
 
@@ -202,54 +200,34 @@ struct SentHistory {
 impl SentHistory {
     fn load() -> Self {
         if let Ok(raw) = fs::read_to_string(HISTORY_PATH) {
-            if let Ok(v) = serde_json::from_str::<Self>(&raw) {
-                return v;
-            }
+            if let Ok(v) = serde_json::from_str::<Self>(&raw) { return v; }
         }
         Self::default()
     }
 
     fn prune(&mut self, lookback_days: i64) {
-        let threshold = Utc::now() - ChronoDuration::days(lookback_days.max(1));
+        let threshold = Utc::now() - ChronoDuration::days(lookback_days.max(0));
         self.sent_at.retain(|_, ts| *ts >= threshold);
     }
 
     fn save(&self) -> Result<()> {
-        if let Some(parent) = Path::new(HISTORY_PATH).parent() {
-            fs::create_dir_all(parent)?;
-        }
+        if let Some(parent) = Path::new(HISTORY_PATH).parent() { fs::create_dir_all(parent)?; }
         fs::write(HISTORY_PATH, serde_json::to_string_pretty(self)?)?;
         Ok(())
     }
 }
 
 #[derive(Clone, Debug, PartialEq)]
-enum LogLevel {
-    Debug,
-    Info,
-    Success,
-    Warning,
-    Error,
-}
+enum LogLevel { Debug, Info, Success, Warning, Error }
 
 #[derive(Clone, Debug)]
-struct LogMessage {
-    time: String,
-    level: LogLevel,
-    text: String,
-}
+struct LogMessage { time: String, level: LogLevel, text: String }
 
 #[derive(Clone, Debug)]
 enum AppEvent {
     Log(LogLevel, String),
-    Stats {
-        total: usize,
-        by_protocol: BTreeMap<String, usize>,
-    },
-    PingResult {
-        ok: bool,
-        detail: String,
-    },
+    Stats { total: usize, by_protocol: BTreeMap<String, usize> },
+    PingResult { ok: bool, detail: String },
     WorkerStopped,
 }
 
@@ -274,16 +252,11 @@ impl AppState {
         let (tx, rx) = mpsc::channel();
         let mut state = Self {
             config: AppConfig::load_or_create(),
-            channels_text: fs::read_to_string(CHANNELS_PATH)
-                .unwrap_or_else(|_| "IranProxyPlus\nfilembad".to_string()),
+            channels_text: fs::read_to_string(CHANNELS_PATH).unwrap_or_else(|_| DEFAULT_TARGETS.to_string()),
             active_tab: 0,
             proxy_access_status: "Awaiting test...".to_string(),
             proxy_access_ok: None,
-            logs: vec![LogMessage {
-                time: Local::now().format("%H:%M:%S").to_string(),
-                level: LogLevel::Info,
-                text: "🖥️ System Boot: Python-Logic Engine Initialized.".to_string(),
-            }],
+            logs: vec![LogMessage { time: Local::now().format("%H:%M:%S").to_string(), level: LogLevel::Info, text: "🖥️ System Boot: Smart Memory Engine Initialized.".to_string() }],
             total_configs: 0,
             by_protocol: BTreeMap::new(),
             running: false,
@@ -308,30 +281,17 @@ impl AppState {
                 match client.get("https://t.me/s/telegram").send() {
                     Ok(resp) if resp.status().is_success() => {
                         let elapsed = start.elapsed().as_millis();
-                        let _ = tx.send(AppEvent::PingResult {
-                            ok: true,
-                            detail: format!("Online ({}ms)", elapsed),
-                        });
-                        let _ = tx.send(AppEvent::Log(
-                            LogLevel::Success,
-                            format!("📡 Network Check Passed in {}ms", elapsed),
-                        ));
+                        let _ = tx.send(AppEvent::PingResult { ok: true, detail: format!("Online ({}ms)", elapsed) });
+                        let _ = tx.send(AppEvent::Log(LogLevel::Success, format!("📡 Network Check Passed in {}ms", elapsed)));
                     }
-                    _ => {
-                        let _ = tx.send(AppEvent::PingResult {
-                            ok: false,
-                            detail: "Failed".to_string(),
-                        });
-                    }
+                    _ => { let _ = tx.send(AppEvent::PingResult { ok: false, detail: "Failed".to_string() }); }
                 }
             }
         });
     }
 
     fn save_all_settings(&mut self) {
-        if let Some(parent) = Path::new(CHANNELS_PATH).parent() {
-            let _ = fs::create_dir_all(parent);
-        }
+        if let Some(parent) = Path::new(CHANNELS_PATH).parent() { let _ = fs::create_dir_all(parent); }
         let _ = fs::write(CHANNELS_PATH, &self.channels_text);
         if self.config.save().is_ok() {
             self.add_log(LogLevel::Success, "💾 All settings and targets saved successfully.".to_string());
@@ -353,10 +313,7 @@ impl AppState {
 
         self.worker_handle = Some(thread::spawn(move || {
             if let Err(err) = run_worker(cfg, channels_raw, stop_flag, tx.clone()) {
-                let _ = tx.send(AppEvent::Log(
-                    LogLevel::Error,
-                    format!("🔥 CRASH: {}", err),
-                ));
+                let _ = tx.send(AppEvent::Log(LogLevel::Error, format!("🔥 CRASH: {}", err)));
             }
             let _ = tx.send(AppEvent::WorkerStopped);
         }));
@@ -364,49 +321,26 @@ impl AppState {
 
     fn stop(&mut self) {
         self.stop_flag.store(true, Ordering::SeqCst);
-        self.add_log(
-            LogLevel::Warning,
-            "🛑 Stop signal sent. Interrupting all threads cleanly...".to_string(),
-        );
+        self.add_log(LogLevel::Warning, "🛑 Stop signal sent. Interrupting all threads cleanly...".to_string());
     }
 
     fn add_log(&mut self, level: LogLevel, text: String) {
-        self.logs.push(LogMessage {
-            time: Local::now().format("%H:%M:%S").to_string(),
-            level,
-            text,
-        });
+        self.logs.push(LogMessage { time: Local::now().format("%H:%M:%S").to_string(), level, text });
     }
 
     fn poll_events(&mut self) {
         while let Ok(event) = self.event_rx.try_recv() {
             match event {
                 AppEvent::Log(level, msg) => self.add_log(level, msg),
-                AppEvent::Stats { total, by_protocol } => {
-                    self.total_configs = total;
-                    self.by_protocol = by_protocol;
-                }
-                AppEvent::PingResult { ok, detail } => {
-                    self.proxy_access_ok = Some(ok);
-                    self.proxy_access_status = detail;
-                }
-                AppEvent::WorkerStopped => {
-                    self.running = false;
-                    self.add_log(
-                        LogLevel::Warning,
-                        "💤 Engine safely terminated.".to_string(),
-                    );
-                }
+                AppEvent::Stats { total, by_protocol } => { self.total_configs = total; self.by_protocol = by_protocol; }
+                AppEvent::PingResult { ok, detail } => { self.proxy_access_ok = Some(ok); self.proxy_access_status = detail; }
+                AppEvent::WorkerStopped => { self.running = false; self.add_log(LogLevel::Warning, "💤 Engine safely terminated.".to_string()); }
             }
         }
     }
 }
 
-impl Drop for AppState {
-    fn drop(&mut self) {
-        self.stop_flag.store(true, Ordering::SeqCst);
-    }
-}
+impl Drop for AppState { fn drop(&mut self) { self.stop_flag.store(true, Ordering::SeqCst); } }
 
 fn apply_modern_theme(ctx: &egui::Context) {
     let mut visuals = egui::Visuals::dark();
@@ -427,25 +361,12 @@ impl eframe::App for AppState {
 
         egui::TopBottomPanel::top("header")
             .exact_height(85.0)
-            .frame(
-                egui::Frame::default()
-                    .fill(egui::Color32::from_rgb(18, 20, 30))
-                    .inner_margin(15.0),
-            )
+            .frame(egui::Frame::default().fill(egui::Color32::from_rgb(18, 20, 30)).inner_margin(15.0))
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     ui.vertical(|ui| {
-                        ui.label(
-                            egui::RichText::new("⚡ Telegram Config Collector")
-                                .size(28.0)
-                                .strong()
-                                .color(egui::Color32::from_rgb(240, 248, 255)),
-                        );
-                        ui.label(
-                            egui::RichText::new("Python-Logic Merging & CF Detection")
-                                .size(13.0)
-                                .color(egui::Color32::from_rgb(120, 140, 160)),
-                        );
+                        ui.label(egui::RichText::new("⚡ Telegram Config Collector").size(28.0).strong().color(egui::Color32::from_rgb(240, 248, 255)));
+                        ui.label(egui::RichText::new("Smart Memory & Concurrent Pro Engine").size(13.0).color(egui::Color32::from_rgb(120, 140, 160)));
                     });
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -469,11 +390,7 @@ impl eframe::App for AppState {
 
         egui::SidePanel::left("sidebar")
             .default_width(360.0)
-            .frame(
-                egui::Frame::default()
-                    .fill(egui::Color32::from_rgb(18, 20, 30))
-                    .inner_margin(15.0),
-            )
+            .frame(egui::Frame::default().fill(egui::Color32::from_rgb(18, 20, 30)).inner_margin(15.0))
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     ui.selectable_value(&mut self.active_tab, 0, "⚙ Main");
@@ -485,10 +402,7 @@ impl eframe::App for AppState {
                     match self.active_tab {
                         0 => {
                             ui.add_space(5.0);
-                            ui.heading(
-                                egui::RichText::new("💻 Performance Profile")
-                                    .color(egui::Color32::GOLD),
-                            );
+                            ui.heading(egui::RichText::new("💻 Performance Profile").color(egui::Color32::GOLD));
                             
                             let mut profile_changed = false;
                             egui::ComboBox::from_label("Hardware Profile")
@@ -505,9 +419,7 @@ impl eframe::App for AppState {
                                     if ui.selectable_value(&mut self.config.performance, PerformanceProfile::Custom, "Custom Profile").changed() { profile_changed = true; }
                                 });
 
-                            if profile_changed {
-                                self.config.apply_profile_defaults();
-                            }
+                            if profile_changed { self.config.apply_profile_defaults(); }
 
                             let is_custom = self.config.performance == PerformanceProfile::Custom;
 
@@ -517,7 +429,7 @@ impl eframe::App for AppState {
                                 .inner_margin(10.0)
                                 .show(ui, |ui| {
                                     ui.horizontal(|ui| {
-                                        ui.label("Delay (ms):").on_hover_text("Pause between requests to avoid ban.");
+                                        ui.label("Delay (ms):").on_hover_text("Pause between page requests to avoid ban.");
                                         ui.add_enabled(is_custom, egui::DragValue::new(&mut self.config.delay_ms).range(100..=10000));
                                     });
                                     ui.horizontal(|ui| {
@@ -525,25 +437,20 @@ impl eframe::App for AppState {
                                         ui.add_enabled(is_custom, egui::DragValue::new(&mut self.config.timeout_secs).range(5..=60));
                                     });
                                     ui.horizontal(|ui| {
-                                        ui.label("Concurrent Channels:").on_hover_text("How many channels to scan simultaneously.");
+                                        ui.label("Simultaneous Channels:").on_hover_text("How many channels to scan in parallel (Threads).");
                                         ui.add_enabled(is_custom, egui::DragValue::new(&mut self.config.concurrent_channels).range(1..=50));
                                     });
                                 });
 
                             ui.add_space(15.0);
-                            ui.heading(
-                                egui::RichText::new("🌐 Network & Proxy")
-                                    .color(egui::Color32::LIGHT_BLUE),
-                            );
+                            ui.heading(egui::RichText::new("🌐 Network & Proxy").color(egui::Color32::LIGHT_BLUE));
                             
                             let mut proxy_changed = false;
                             ui.horizontal(|ui| {
                                 egui::ComboBox::from_id_salt("proxy_type")
                                     .selected_text(match self.config.proxy_type {
-                                        ProxyType::None => "Direct",
-                                        ProxyType::System => "System Auto",
-                                        ProxyType::Http => "HTTP",
-                                        ProxyType::Socks5 => "SOCKS5",
+                                        ProxyType::None => "Direct", ProxyType::System => "System Auto",
+                                        ProxyType::Http => "HTTP", ProxyType::Socks5 => "SOCKS5",
                                     })
                                     .show_ui(ui, |ui| {
                                         if ui.selectable_value(&mut self.config.proxy_type, ProxyType::System, "System Auto").changed() { proxy_changed = true; }
@@ -552,115 +459,51 @@ impl eframe::App for AppState {
                                         if ui.selectable_value(&mut self.config.proxy_type, ProxyType::None, "Direct").changed() { proxy_changed = true; }
                                     });
                                 
-                                if ui.button("🔄 Test").clicked() {
-                                    proxy_changed = true;
-                                }
+                                if ui.button("🔄 Test").clicked() { proxy_changed = true; }
                             });
                             
-                            if proxy_changed {
-                                self.test_connection();
-                            }
+                            if proxy_changed { self.test_connection(); }
 
-                            if matches!(self.config.proxy_type, ProxyType::Http | ProxyType::Socks5)
-                            {
-                                ui.horizontal(|ui| {
-                                    ui.label("IP:");
-                                    ui.text_edit_singleline(&mut self.config.proxy_host);
-                                });
-                                ui.horizontal(|ui| {
-                                    ui.label("Port:");
-                                    ui.add(
-                                        egui::DragValue::new(&mut self.config.proxy_port)
-                                            .range(1..=65535),
-                                    );
-                                });
+                            if matches!(self.config.proxy_type, ProxyType::Http | ProxyType::Socks5) {
+                                ui.horizontal(|ui| { ui.label("IP:"); ui.text_edit_singleline(&mut self.config.proxy_host); });
+                                ui.horizontal(|ui| { ui.label("Port:"); ui.add(egui::DragValue::new(&mut self.config.proxy_port).range(1..=65535)); });
                             }
-                            ui.checkbox(
-                                &mut self.config.ignore_ssl_errors,
-                                "Bypass SSL/TLS Filter (For VPNs)",
-                            );
+                            ui.checkbox(&mut self.config.ignore_ssl_errors, "Bypass SSL/TLS Filter (For VPNs)");
 
                             ui.add_space(15.0);
-                            ui.heading(
-                                egui::RichText::new("📅 Scheduler & Dates")
-                                    .color(egui::Color32::LIGHT_BLUE),
-                            );
-                            ui.horizontal(|ui| {
-                                ui.label("Loop Interval (Min):");
-                                ui.add(
-                                    egui::DragValue::new(&mut self.config.interval_minutes)
-                                        .range(1..=240),
-                                );
-                            });
-                            ui.horizontal(|ui| {
-                                ui.label("Pages Per Channel:");
-                                ui.add(
-                                    egui::DragValue::new(&mut self.config.max_pages_per_channel)
-                                        .range(1..=100),
-                                );
-                            });
-                            ui.horizontal(|ui| {
-                                ui.label("Lookback Days:");
-                                ui.add(
-                                    egui::DragValue::new(&mut self.config.lookback_days)
-                                        .range(1..=30),
-                                );
-                            });
+                            ui.heading(egui::RichText::new("📅 Scheduler & Dates").color(egui::Color32::LIGHT_BLUE));
+                            ui.horizontal(|ui| { ui.label("Loop Interval (Min):"); ui.add(egui::DragValue::new(&mut self.config.interval_minutes).range(1..=240)); });
+                            ui.horizontal(|ui| { ui.label("Max Pages/Channel:"); ui.add(egui::DragValue::new(&mut self.config.max_pages_per_channel).range(1..=100)); });
+                            ui.horizontal(|ui| { ui.label("Lookback Days:"); ui.add(egui::DragValue::new(&mut self.config.lookback_days).range(0..=30)); });
 
                             ui.add_space(15.0);
-                            ui.heading(
-                                egui::RichText::new("💾 Output Settings")
-                                    .color(egui::Color32::LIGHT_BLUE),
-                            );
-                            ui.horizontal(|ui| {
-                                ui.label("Folder:");
-                                ui.text_edit_singleline(&mut self.config.output_directory)
-                                    .on_hover_text("Directory path to save results.");
-                            });
-                            ui.checkbox(
-                                &mut self.config.output_new_only_enabled,
-                                "Save New Configs Only (new_only)",
-                            );
-                            ui.checkbox(
-                                &mut self.config.output_append_unique_enabled,
-                                "Backup Unique Configs (append_unique)",
-                            );
+                            ui.heading(egui::RichText::new("💾 Output Settings").color(egui::Color32::LIGHT_BLUE));
+                            ui.horizontal(|ui| { ui.label("Folder:"); ui.text_edit_singleline(&mut self.config.output_directory).on_hover_text("Directory path to save results."); });
+                            ui.checkbox(&mut self.config.output_new_only_enabled, "Save New Configs Only (new_only)");
+                            ui.checkbox(&mut self.config.output_append_unique_enabled, "Backup Unique Configs (append_unique)");
                         }
                         1 => {
-                            ui.heading(
-                                egui::RichText::new("📡 Target Channels")
-                                    .color(egui::Color32::LIGHT_BLUE),
-                            );
+                            ui.heading(egui::RichText::new("📡 Target Channels").color(egui::Color32::LIGHT_BLUE));
                             ui.label(egui::RichText::new("One ID/Link per line:").small().color(egui::Color32::GRAY));
                             ui.add_sized(
                                 [ui.available_width(), ui.available_height() - 20.0],
-                                egui::TextEdit::multiline(&mut self.channels_text)
-                                    .font(egui::TextStyle::Monospace),
+                                egui::TextEdit::multiline(&mut self.channels_text).font(egui::TextStyle::Monospace),
                             );
                         }
                         2 => {
-                            ui.heading(
-                                egui::RichText::new("🎯 Protocols Filter")
-                                    .color(egui::Color32::LIGHT_BLUE),
-                            );
+                            ui.heading(egui::RichText::new("🎯 Protocols Filter").color(egui::Color32::LIGHT_BLUE));
                             ui.label(egui::RichText::new("Set Max Count to 0 for UNLIMITED").small().color(egui::Color32::GRAY));
                             
                             for (name, rule) in &mut self.config.protocol_rules {
                                 ui.horizontal(|ui| {
                                     ui.checkbox(&mut rule.enabled, name);
-                                    ui.with_layout(
-                                        egui::Layout::right_to_left(egui::Align::Center),
-                                        |ui| {
-                                            let response = ui.add(
-                                                egui::DragValue::new(&mut rule.max_count)
-                                                    .range(0..=500000),
-                                            );
-                                            if rule.max_count == 0 {
-                                                response.on_hover_text("0 = Unlimited");
-                                                ui.label(egui::RichText::new("Unlimited").color(egui::Color32::from_rgb(60, 180, 120)).small());
-                                            }
-                                        },
-                                    );
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        let response = ui.add(egui::DragValue::new(&mut rule.max_count).range(0..=500000));
+                                        if rule.max_count == 0 {
+                                            response.on_hover_text("0 = Unlimited");
+                                            ui.label(egui::RichText::new("Unlimited").color(egui::Color32::from_rgb(60, 180, 120)).small());
+                                        }
+                                    });
                                 });
                             }
                         }
@@ -670,23 +513,12 @@ impl eframe::App for AppState {
             });
 
         egui::CentralPanel::default()
-            .frame(
-                egui::Frame::default()
-                    .fill(egui::Color32::from_rgb(13, 15, 23))
-                    .inner_margin(15.0),
-            )
+            .frame(egui::Frame::default().fill(egui::Color32::from_rgb(13, 15, 23)).inner_margin(15.0))
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     ui.group(|ui| {
-                        ui.label(
-                            egui::RichText::new("Extracted Total:").color(egui::Color32::GRAY),
-                        );
-                        ui.label(
-                            egui::RichText::new(self.total_configs.to_string())
-                                .size(22.0)
-                                .strong()
-                                .color(egui::Color32::from_rgb(30, 180, 120)),
-                        );
+                        ui.label(egui::RichText::new("Extracted Total:").color(egui::Color32::GRAY));
+                        ui.label(egui::RichText::new(self.total_configs.to_string()).size(22.0).strong().color(egui::Color32::from_rgb(30, 180, 120)));
                     });
                     let proxy_color = match self.proxy_access_ok {
                         Some(true) => egui::Color32::from_rgb(30, 180, 120),
@@ -694,15 +526,8 @@ impl eframe::App for AppState {
                         None => egui::Color32::from_rgb(200, 150, 40),
                     };
                     ui.group(|ui| {
-                        ui.label(
-                            egui::RichText::new("Connection Status:").color(egui::Color32::GRAY),
-                        );
-                        ui.label(
-                            egui::RichText::new(&self.proxy_access_status)
-                                .size(15.0)
-                                .strong()
-                                .color(proxy_color),
-                        );
+                        ui.label(egui::RichText::new("Connection Status:").color(egui::Color32::GRAY));
+                        ui.label(egui::RichText::new(&self.proxy_access_status).size(15.0).strong().color(proxy_color));
                     });
                 });
 
@@ -713,27 +538,14 @@ impl eframe::App for AppState {
                     .inner_margin(10.0)
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
-                            ui.heading(
-                                egui::RichText::new("Terminal Log")
-                                    .color(egui::Color32::WHITE),
-                            );
-                            ui.with_layout(
-                                egui::Layout::right_to_left(egui::Align::Center),
-                                |ui| {
-                                    if ui.button("Clear").clicked() {
-                                        self.logs.clear();
-                                    }
-                                    if ui.button("Copy").clicked() {
-                                        let text = self
-                                            .logs
-                                            .iter()
-                                            .map(|l| format!("[{}] {}", l.time, l.text))
-                                            .collect::<Vec<_>>()
-                                            .join("\n");
-                                        ctx.output_mut(|o| o.copied_text = text);
-                                    }
-                                },
-                            );
+                            ui.heading(egui::RichText::new("Terminal Log").color(egui::Color32::WHITE));
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                if ui.button("Clear").clicked() { self.logs.clear(); }
+                                if ui.button("Copy").clicked() {
+                                    let text = self.logs.iter().map(|l| format!("[{}] {}", l.time, l.text)).collect::<Vec<_>>().join("\n");
+                                    ctx.output_mut(|o| o.copied_text = text);
+                                }
+                            });
                         });
                         ui.separator();
                         egui::ScrollArea::vertical()
@@ -744,23 +556,14 @@ impl eframe::App for AppState {
                                 for log in self.logs.iter().rev().take(500).rev() {
                                     let color = match log.level {
                                         LogLevel::Debug => egui::Color32::from_rgb(100, 110, 130),
-                                        LogLevel::Info => egui::Color32::from_rgb(160, 180, 200),
-                                        LogLevel::Success => egui::Color32::from_rgb(60, 210, 130),
-                                        LogLevel::Warning => egui::Color32::from_rgb(240, 180, 50),
+                                        LogLevel::Info => egui::Color32::from_rgb(120, 200, 255),
+                                        LogLevel::Success => egui::Color32::from_rgb(80, 240, 150),
+                                        LogLevel::Warning => egui::Color32::from_rgb(250, 190, 70),
                                         LogLevel::Error => egui::Color32::from_rgb(255, 90, 90),
                                     };
                                     ui.horizontal_wrapped(|ui| {
-                                        ui.label(
-                                            egui::RichText::new(format!("[{}]", log.time))
-                                                .color(egui::Color32::from_rgb(80, 90, 110))
-                                                .monospace()
-                                                .small(),
-                                        );
-                                        ui.label(
-                                            egui::RichText::new(&log.text)
-                                                .color(color)
-                                                .monospace(),
-                                        );
+                                        ui.label(egui::RichText::new(format!("[{}]", log.time)).color(egui::Color32::from_rgb(80, 90, 110)).monospace().small());
+                                        ui.label(egui::RichText::new(&log.text).color(color).monospace());
                                     });
                                 }
                             });
@@ -778,20 +581,10 @@ fn is_windows_compatible(link: &str) -> bool {
     let re = Regex::new(r"secret=([a-zA-Z0-9%_\-]+)").unwrap();
     if let Some(caps) = re.captures(link) {
         let secret = caps[1].to_lowercase();
-        if secret.contains('%') || secret.contains('_') || secret.contains('-') {
-            return false;
-        }
-        if secret.starts_with("ee") {
-            return false;
-        }
-        let actual_secret = if secret.starts_with("dd") {
-            &secret[2..]
-        } else {
-            &secret
-        };
-        if actual_secret.len() != 32 {
-            return false;
-        }
+        if secret.contains('%') || secret.contains('_') || secret.contains('-') { return false; }
+        if secret.starts_with("ee") { return false; }
+        let actual_secret = if secret.starts_with("dd") { &secret[2..] } else { &secret };
+        if actual_secret.len() != 32 { return false; }
         return actual_secret.chars().all(|c| c.is_ascii_hexdigit());
     }
     false
@@ -853,7 +646,7 @@ fn build_client(config: &AppConfig) -> Result<reqwest::blocking::Client> {
 }
 
 // =============================================================
-// 🧠 پردازش و توابع خروجی‌گیر منطبق بر پایتون
+// 🧠 استخراج همزمان (Smart Concurrent Scraping)
 // =============================================================
 
 fn run_worker(
@@ -863,21 +656,19 @@ fn run_worker(
     tx: Sender<AppEvent>,
 ) -> Result<()> {
     let channels = parse_channels(&channels_raw);
+    let total_channels_count = channels.len();
+    
     let regex_pattern = r"(?i)(vmess|vless|trojan|ss|ssr|tuic|hysteria|hysteria2|hy2|juicity|snell|anytls|ssh|wireguard|wg|warp|socks|socks4|socks5|tg|dns|nm-dns|nm-vless|slipnet-enc|slipnet|slipstream|dnstt)://[a-zA-Z0-9\-\._~:/\?#\[\]@!\$&'\(\)\*\+,%;=]+";
     let regex = Regex::new(regex_pattern).unwrap();
     let date_regex = Regex::new(r#"<time datetime="([^"]+)""#).unwrap();
+    let post_id_regex = Regex::new(r#"data-post="[^/]+/(\d+)""#).unwrap();
 
     let mut history = SentHistory::load();
-    let threshold_date = Utc::now() - ChronoDuration::days(config.lookback_days.max(1));
+    let threshold_date = Utc::now() - ChronoDuration::days(config.lookback_days.max(0));
+    
+    let mut channel_memory = ChannelMemory::load();
 
-    log_worker(
-        &tx,
-        LogLevel::Info,
-        format!(
-            "🚀 Crawler Started | Mode: {:?} | Concurrency: {} threads",
-            config.performance, config.concurrent_channels
-        ),
-    );
+    log_worker(&tx, LogLevel::Info, format!("🚀 Crawler Started | {} Channels | Concurrent Threads: {}", total_channels_count, config.concurrent_channels));
 
     loop {
         if stop.load(Ordering::SeqCst) { break; }
@@ -888,9 +679,11 @@ fn run_worker(
         let queue = Arc::new(Mutex::new(channels.clone()));
         let global_gathered: Arc<Mutex<BTreeMap<String, BTreeSet<String>>>> = Arc::new(Mutex::new(BTreeMap::new()));
         let total_run_configs = Arc::new(Mutex::new(0usize));
+        let completed_count = Arc::new(AtomicUsize::new(0));
+        let new_memory = Arc::new(Mutex::new(channel_memory.clone()));
         
         let mut handles = vec![];
-        let threads_count = config.concurrent_channels.max(1).min(channels.len().max(1));
+        let threads_count = config.concurrent_channels.max(1).min(total_channels_count.max(1));
 
         for _ in 0..threads_count {
             let q = queue.clone();
@@ -900,8 +693,12 @@ fn run_worker(
             let tx_c = tx.clone();
             let gathered_c = global_gathered.clone();
             let total_c = total_run_configs.clone();
+            let memory_c = new_memory.clone();
+            let comp_count_c = completed_count.clone();
+            
             let reg_c = regex.clone();
             let date_reg_c = date_regex.clone();
+            let post_id_reg_c = post_id_regex.clone();
 
             handles.push(thread::spawn(move || {
                 loop {
@@ -909,25 +706,25 @@ fn run_worker(
                     
                     let channel = {
                         let mut lock = q.lock().unwrap();
-                        match lock.pop() {
-                            Some(c) => c,
-                            None => break,
-                        }
+                        match lock.pop() { Some(c) => c, None => break, }
                     };
 
-                    log_worker(&tx_c, LogLevel::Info, format!("📡 Thread scanning: @{}", channel));
-                    
+                    let clean_channel_name = channel.trim_start_matches('@').to_lowercase();
+                    let stored_max_id = memory_c.lock().unwrap().last_seen_ids.get(&clean_channel_name).copied();
+                    let mut highest_id_seen_now = 0;
+
                     let mut before: Option<String> = None;
                     let mut channel_configs = 0;
                     let mut local_gathered: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+                    let mut hit_known_post = false;
+
+                    log_worker(&tx_c, LogLevel::Debug, format!("📡 Scanning @{} (Memory: {:?})", channel, stored_max_id));
 
                     for page in 1..=config_c.max_pages_per_channel {
-                        if stop_c.load(Ordering::SeqCst) { break; }
+                        if stop_c.load(Ordering::SeqCst) || hit_known_post { break; }
                         
                         let mut url = format!("https://t.me/s/{}", channel);
-                        if let Some(ref id) = before {
-                            url.push_str(&format!("?before={}", id));
-                        }
+                        if let Some(ref id) = before { url.push_str(&format!("?before={}", id)); }
 
                         match client_c.get(&url).send() {
                             Ok(resp) if resp.status().is_success() => {
@@ -935,11 +732,7 @@ fn run_worker(
                                     let mut found_in_page = 0;
                                     let mut next_before = None;
 
-                                    let decoded_html = raw_html
-                                        .replace("&amp;", "&")
-                                        .replace("&lt;", "<")
-                                        .replace("&gt;", ">")
-                                        .replace("&quot;", "\"");
+                                    let decoded_html = raw_html.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"");
 
                                     let next_regex = Regex::new(r#"data-post="[^/]+/(\d+)""#).unwrap();
                                     for cap in next_regex.captures_iter(&decoded_html) {
@@ -948,6 +741,22 @@ fn run_worker(
 
                                     let blocks: Vec<&str> = decoded_html.split("tgme_widget_message ").collect();
                                     for block in blocks {
+                                        let mut block_id = 0;
+                                        if let Some(caps) = post_id_reg_c.captures(block) {
+                                            if let Ok(id) = caps[1].parse::<u64>() {
+                                                block_id = id;
+                                                if id > highest_id_seen_now { highest_id_seen_now = id; }
+                                            }
+                                        }
+
+                                        // 🧠 پردازش حافظه هوشمند
+                                        if let Some(known_id) = stored_max_id {
+                                            if block_id > 0 && block_id <= known_id {
+                                                hit_known_post = true;
+                                                continue; // رد کردن پست تکراری
+                                            }
+                                        }
+
                                         let mut is_valid_date = true;
                                         if let Some(caps) = date_reg_c.captures(block) {
                                             if let Ok(parsed_date) = DateTime::parse_from_rfc3339(&caps[1]) {
@@ -959,10 +768,7 @@ fn run_worker(
 
                                         if is_valid_date {
                                             for m in reg_c.find_iter(block) {
-                                                let clean_link = m.as_str()
-                                                    .trim_end_matches(&['(', ')', '[', ']', ' ', '!', '.', ',', ';', '\'', '"', '<', '>'][..])
-                                                    .to_string();
-
+                                                let clean_link = m.as_str().trim_end_matches(&['(', ')', '[', ']', ' ', '!', '.', ',', ';', '\'', '"', '<', '>'][..]).to_string();
                                                 if let Some(proto) = clean_link.split("://").next() {
                                                     found_in_page += 1;
                                                     local_gathered.entry(proto.to_lowercase()).or_default().insert(clean_link);
@@ -974,6 +780,11 @@ fn run_worker(
                                     channel_configs += found_in_page;
                                     let has_next = next_before.is_some();
                                     before = next_before;
+
+                                    if hit_known_post {
+                                        log_worker(&tx_c, LogLevel::Info, format!("⏭️ @{} -> Reached previously scanned posts. Smart stopping.", channel));
+                                        break;
+                                    }
 
                                     if !has_next || found_in_page == 0 { break; }
                                 }
@@ -987,14 +798,16 @@ fn run_worker(
                         thread::sleep(Duration::from_millis(config_c.delay_ms));
                     }
 
-                    if channel_configs > 0 {
-                        let mut g = gathered_c.lock().unwrap();
-                        for (k, v) in local_gathered {
-                            g.entry(k).or_default().extend(v);
-                        }
-                        *total_c.lock().unwrap() += channel_configs;
-                        log_worker(&tx_c, LogLevel::Success, format!("✔️ @{} finished: {} configs.", channel, channel_configs));
+                    if highest_id_seen_now > 0 {
+                        memory_c.lock().unwrap().last_seen_ids.insert(clean_channel_name, highest_id_seen_now);
                     }
+
+                    let mut g = gathered_c.lock().unwrap();
+                    for (k, v) in local_gathered { g.entry(k).or_default().extend(v); }
+                    *total_c.lock().unwrap() += channel_configs;
+                    
+                    let current_done = comp_count_c.fetch_add(1, Ordering::SeqCst) + 1;
+                    log_worker(&tx_c, LogLevel::Success, format!("[{}/{}] ✔️ @{} completed. Extracted: {}", current_done, total_channels_count, channel, channel_configs));
                 }
             }));
         }
@@ -1004,16 +817,16 @@ fn run_worker(
 
         let mut final_gathered = Arc::try_unwrap(global_gathered).unwrap().into_inner().unwrap();
         let total_run = Arc::try_unwrap(total_run_configs).unwrap().into_inner().unwrap();
+        channel_memory = Arc::try_unwrap(new_memory).unwrap().into_inner().unwrap();
 
-        // 1. Merge hy2 into hysteria2
+        let _ = channel_memory.save();
+
         if let Some(hy2_links) = final_gathered.remove("hy2") {
             final_gathered.entry("hysteria2".to_string()).or_default().extend(hy2_links);
         }
 
-        // 2. Apply Limits
         apply_protocol_limits(&mut final_gathered, &config.protocol_rules);
 
-        // 3. Separate New Only
         let mut new_only: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         let mut total_new = 0;
 
@@ -1033,7 +846,6 @@ fn run_worker(
         let out_new = Path::new(&config.output_directory).join("new_only");
         let out_append = Path::new(&config.output_directory).join("append_unique");
 
-        // 4. Write Files (Python logic: mixed, CF, OS split)
         if config.output_new_only_enabled && !new_only.is_empty() {
             if let Err(e) = write_files_standard(&out_new, &new_only) {
                 log_worker(&tx, LogLevel::Error, format!("Write New Error: {}", e));
@@ -1048,16 +860,10 @@ fn run_worker(
         let _ = history.save();
         let _ = tx.send(AppEvent::Stats { total: total_new, by_protocol });
 
-        log_worker(
-            &tx,
-            LogLevel::Success,
-            format!("🎉 All Channels Processed! Found: {} ({} NEW).", total_run, total_new),
-        );
-        log_worker(
-            &tx,
-            LogLevel::Info,
-            format!("💤 Sleeping for {} minutes before next cycle...", config.interval_minutes),
-        );
+        log_worker(&tx, LogLevel::Success, format!("====================================="));
+        log_worker(&tx, LogLevel::Success, format!("🎉 CYCLE COMPLETE! Total: {} | NEW: {}", total_run, total_new));
+        log_worker(&tx, LogLevel::Success, format!("====================================="));
+        log_worker(&tx, LogLevel::Info, format!("💤 Sleeping for {} minutes...", config.interval_minutes));
 
         for _ in 0..(config.interval_minutes * 60) {
             if stop.load(Ordering::SeqCst) { break; }
@@ -1085,7 +891,7 @@ fn apply_protocol_limits(
 }
 
 // -------------------------------------------------------------
-// توابع ذخیره‌سازی منطبق با اسکریپت پایتون (write_files_standard)
+// توابع ذخیره‌سازی
 // -------------------------------------------------------------
 
 fn save_content(directory: &Path, filename: &str, content_list: &BTreeSet<String>) -> Result<()> {
@@ -1095,10 +901,7 @@ fn save_content(directory: &Path, filename: &str, content_list: &BTreeSet<String
     let lines: Vec<String> = content_list.iter().cloned().collect();
     let content_str = lines.join("\n");
     
-    // فایل متنی
     fs::write(directory.join(format!("{filename}.txt")), &content_str)?;
-    
-    // فایل Base64
     let b64_str = B64.encode(content_str.as_bytes());
     fs::write(directory.join(format!("{filename}_base64.txt")), b64_str)?;
     
@@ -1123,7 +926,6 @@ fn save_content_append(directory: &Path, filename: &str, new_content: &BTreeSet<
     Ok(())
 }
 
-// برای فایل‌های Replace (پوشه new_only)
 fn write_files_standard(base_dir: &Path, data_map: &BTreeMap<String, BTreeSet<String>>) -> Result<()> {
     let mut mixed_content = BTreeSet::new();
     let mut cloudflare_content = BTreeSet::new();
@@ -1135,9 +937,7 @@ fn write_files_standard(base_dir: &Path, data_map: &BTreeMap<String, BTreeSet<St
         if !NON_MIXED_PROTOCOLS.contains(&proto.as_str()) {
             mixed_content.extend(lines.iter().cloned());
             for link in lines {
-                if is_behind_cloudflare(link) {
-                    cloudflare_content.insert(link.clone());
-                }
+                if is_behind_cloudflare(link) { cloudflare_content.insert(link.clone()); }
             }
             save_content(base_dir, proto, lines)?;
         } else if proto == "tg" {
@@ -1151,9 +951,7 @@ fn write_files_standard(base_dir: &Path, data_map: &BTreeMap<String, BTreeSet<St
             save_content(base_dir, "tg_android", &android_tg)?;
             save_content(base_dir, "tg", lines)?;
         } else {
-            if proto == "slipnet" || proto == "slipnet-enc" {
-                slipnet_mixed_content.extend(lines.iter().cloned());
-            }
+            if proto == "slipnet" || proto == "slipnet-enc" { slipnet_mixed_content.extend(lines.iter().cloned()); }
             save_content(base_dir, proto, lines)?;
         }
     }
@@ -1165,7 +963,6 @@ fn write_files_standard(base_dir: &Path, data_map: &BTreeMap<String, BTreeSet<St
     Ok(())
 }
 
-// برای فایل‌های Append (پوشه append_unique)
 fn write_files_standard_append(base_dir: &Path, data_map: &BTreeMap<String, BTreeSet<String>>) -> Result<()> {
     let mut mixed_content = BTreeSet::new();
     let mut cloudflare_content = BTreeSet::new();
@@ -1216,9 +1013,7 @@ fn parse_channels(raw: &str) -> Vec<String> {
         .filter(|l| !l.is_empty() && !l.starts_with('#'))
         .filter_map(|line| {
             if let Some(rest) = line.strip_prefix('@') { return Some(rest.to_string()); }
-            if line.contains("t.me/") {
-                return line.split("t.me/").nth(1).map(|x| x.split('?').next().unwrap_or_default().trim_matches('/').to_string());
-            }
+            if line.contains("t.me/") { return line.split("t.me/").nth(1).map(|x| x.split('?').next().unwrap_or_default().trim_matches('/').to_string()); }
             Some(line.to_string())
         })
         .filter(|s| !s.is_empty())
