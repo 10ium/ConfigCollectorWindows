@@ -1,3 +1,8 @@
+pub mod config;
+pub mod scraper;
+pub mod storage;
+pub mod tester; // ثبت ماژول جدید تستر
+
 use crate::config::{AppConfig, PerformanceProfile, ProxyType, CHANNELS_PATH};
 use crate::scraper::{build_client, run_worker, AppEvent, LogLevel};
 use chrono::Local;
@@ -202,7 +207,7 @@ impl eframe::App for AppState {
                                 .color(egui::Color32::from_rgb(240, 248, 255)),
                         );
                         ui.label(
-                            egui::RichText::new("Modular Smart Engine - Phase 2 (Tester)")
+                            egui::RichText::new("Modular Smart Engine - Phase 2 (Tester Integrated)")
                                 .size(13.0)
                                 .color(egui::Color32::from_rgb(120, 140, 160)),
                         );
@@ -239,7 +244,7 @@ impl eframe::App for AppState {
                     ui.selectable_value(&mut self.active_tab, 0, "⚙ Main");
                     ui.selectable_value(&mut self.active_tab, 1, "📡 Targets");
                     ui.selectable_value(&mut self.active_tab, 2, "🎯 Filters");
-                    ui.selectable_value(&mut self.active_tab, 3, "🔬 Tester"); // تب جدید برای تستر
+                    ui.selectable_value(&mut self.active_tab, 3, "🔬 Tester"); // تب جدید اضافه شد
                 });
                 ui.separator();
                 egui::ScrollArea::vertical().show(ui, |ui| {
@@ -352,7 +357,7 @@ impl eframe::App for AppState {
                             }
                         }
                         3 => {
-                            // بخش جدید تنظیمات تستر
+                            // --- بخش تنظیمات مربوط به Tester ---
                             ui.heading(egui::RichText::new("🔬 Phase 2: Configuration Tester").color(egui::Color32::LIGHT_BLUE));
                             ui.label(egui::RichText::new("Requires xray-knife binary.").small().color(egui::Color32::GRAY));
                             ui.add_space(10.0);
@@ -361,7 +366,7 @@ impl eframe::App for AppState {
                             
                             ui.add_space(10.0);
                             ui.group(|ui| {
-                                ui.set_enabled(self.config.tester.enabled);
+                                ui.set_enabled(self.config.tester.enabled); // غیرفعال شدن گزینه‌ها در صورت خاموش بودن تستر
                                 
                                 ui.horizontal(|ui| {
                                     ui.label("Concurrent Tests:");
@@ -440,4 +445,19 @@ impl eframe::App for AppState {
             });
         ctx.request_repaint_after(Duration::from_millis(500));
     }
+}
+
+// برای کامپایل صحیح با `cargo run` یا `cargo build` به این بخش نیز نیاز دارید.
+fn main() -> Result<(), eframe::Error> {
+    let options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size([1100.0, 750.0])
+            .with_min_inner_size([900.0, 600.0]),
+        ..Default::default()
+    };
+    eframe::run_native(
+        "Telegram Config Collector - Ultra Fast Tester",
+        options,
+        Box::new(|_cc| Ok(Box::new(AppState::bootstrap()))),
+    )
 }
