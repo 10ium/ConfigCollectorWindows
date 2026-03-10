@@ -1,5 +1,6 @@
 use crate::config::{AppConfig, ChannelMemory, ProtocolRule, ProxyType, SentHistory};
 use crate::storage::{write_files_standard, write_files_standard_append};
+use crate::tester::filter_working_configs; // اضافه شدن ماژول تستر
 use anyhow::Result;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use regex::Regex;
@@ -247,7 +248,13 @@ pub fn run_worker(
             final_gathered.entry("hysteria2".to_string()).or_default().extend(hy2_links);
         }
 
+        // --- مرحله اعمال محدودیت تعداد (قبل از تست) ---
         apply_protocol_limits(&mut final_gathered, &config.protocol_rules);
+
+        // --- مرحله تست (فاز دوم) ---
+        if config.tester.enabled {
+            filter_working_configs(&mut final_gathered, &config.tester, stop.clone(), tx.clone());
+        }
 
         let mut new_only: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         let mut total_new = 0;
@@ -265,8 +272,11 @@ pub fn run_worker(
         let mut by_protocol = BTreeMap::new();
         for (k, v) in &new_only { by_protocol.insert(k.clone(), v.len()); }
 
-        let out_new = Path::new(&config.output_directory).join("new_only");
-        let out_append = Path::new(&config.output_directory).join("append_unique");
+        // --- مرحله ایجاد مسیر ذخیره‌سازی هوشمند ---
+        let test_status_dir = if config.tester.enabled { "tested" } else { "untested" };
+        let base_out = Path::new(&config.output_directory).join(test_status_dir);
+        let out_new = base_out.join("new_only");
+        let out_append = base_out.join("append_unique");
 
         if config.output_new_only_enabled && !new_only.is_empty() {
             if let Err(e) = write_files_standard(&out_new, &new_only) {
@@ -283,7 +293,7 @@ pub fn run_worker(
         let _ = tx.send(AppEvent::Stats { total: total_new, by_protocol });
 
         log_worker(&tx, LogLevel::Success, format!("====================================="));
-        log_worker(&tx, LogLevel::Success, format!("🎉 CYCLE COMPLETE! Total: {} | NEW: {}", total_run, total_new));
+        log_worker(&tx, LogLevel::Success, format!("🎉 CYCLE COMPLETE! Scraped: {} | PASSED/NEW: {}", total_run, total_new));
         log_worker(&tx, LogLevel::Success, format!("====================================="));
         log_worker(&tx, LogLevel::Info, format!("💤 Sleeping for {} minutes...", config.interval_minutes));
 
