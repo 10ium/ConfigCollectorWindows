@@ -1,7 +1,8 @@
 pub mod config;
 pub mod scraper;
 pub mod storage;
-pub mod tester; // ثبت ماژول جدید تستر
+pub mod tester;
+pub mod updater;
 
 use crate::config::{AppConfig, PerformanceProfile, ProxyType, CHANNELS_PATH};
 use crate::scraper::{build_client, run_worker, AppEvent, LogLevel};
@@ -32,6 +33,7 @@ pub struct AppState {
     pub by_protocol: BTreeMap<String, usize>,
     pub running: bool,
     pub stop_flag: Arc<AtomicBool>,
+    pub is_downloading: Arc<AtomicBool>, // مدیریت وضعیت دانلود
     pub worker_handle: Option<thread::JoinHandle<()>>,
     pub event_tx: Sender<AppEvent>,
     pub event_rx: Receiver<AppEvent>,
@@ -54,10 +56,21 @@ impl AppState {
             by_protocol: BTreeMap::new(),
             running: false,
             stop_flag: Arc::new(AtomicBool::new(false)),
+            is_downloading: Arc::new(AtomicBool::new(false)),
             worker_handle: None,
             event_tx: tx,
             event_rx: rx,
         };
+
+        // بررسی وجود فایل xray-knife.exe در هنگام راه‌اندازی
+        let xray_path = &state.config.tester.xray_knife_path;
+        if !Path::new(xray_path).exists() {
+            state.add_log(
+                LogLevel::Error,
+                "⚠️ xray-knife.exe not found! Please download it from the Tester tab.".to_string(),
+            );
+        }
+
         state.test_connection();
         state
     }
@@ -109,6 +122,13 @@ impl AppState {
 
     pub fn start(&mut self) {
         if self.running { return; }
+        
+        let xray_path = &self.config.tester.xray_knife_path;
+        if self.config.tester.enabled && !Path::new(xray_path).exists() {
+            self.add_log(LogLevel::Error, "⛔ Cannot start: Tester is enabled but xray-knife.exe is missing. Download it first!".to_string());
+            return;
+        }
+
         self.logs.clear();
         self.save_all_settings();
 
@@ -207,7 +227,7 @@ impl eframe::App for AppState {
                                 .color(egui::Color32::from_rgb(240, 248, 255)),
                         );
                         ui.label(
-                            egui::RichText::new("Modular Smart Engine - Phase 2 (Tester Integrated)")
+                            egui::RichText::new("Modular Smart Engine - Phase 2")
                                 .size(13.0)
                                 .color(egui::Color32::from_rgb(120, 140, 160)),
                         );
@@ -215,15 +235,21 @@ impl eframe::App for AppState {
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let btn_size = [150.0, 45.0];
+                        
+                        // غیرفعال کردن دکمه‌های استارت و استاپ در زمان دانلود
+                        let is_busy = self.running || self.is_downloading.load(Ordering::SeqCst);
+
                         if self.running {
                             if ui.add_sized(btn_size, egui::Button::new(egui::RichText::new("🛑 STOP ENGINE").size(15.0).strong().color(egui::Color32::WHITE)).fill(egui::Color32::from_rgb(220, 60, 60)).rounding(8.0)).clicked() {
                                 self.stop();
                             }
                             ui.spinner();
                         } else {
-                            if ui.add_sized(btn_size, egui::Button::new(egui::RichText::new("▶ START ENGINE").size(15.0).strong().color(egui::Color32::WHITE)).fill(egui::Color32::from_rgb(40, 180, 100)).rounding(8.0)).clicked() {
-                                self.start();
-                            }
+                            ui.add_enabled_ui(!is_busy, |ui| {
+                                if ui.add_sized(btn_size, egui::Button::new(egui::RichText::new("▶ START ENGINE").size(15.0).strong().color(egui::Color32::WHITE)).fill(egui::Color32::from_rgb(40, 180, 100)).rounding(8.0)).clicked() {
+                                    self.start();
+                                }
+                            });
                             if ui.add_sized([130.0, 45.0], egui::Button::new(egui::RichText::new("💾 Save Settings").size(14.0).strong().color(egui::Color32::WHITE)).fill(egui::Color32::from_rgb(60, 120, 200)).rounding(8.0)).clicked() {
                                 self.save_all_settings();
                             }
@@ -244,7 +270,7 @@ impl eframe::App for AppState {
                     ui.selectable_value(&mut self.active_tab, 0, "⚙ Main");
                     ui.selectable_value(&mut self.active_tab, 1, "📡 Targets");
                     ui.selectable_value(&mut self.active_tab, 2, "🎯 Filters");
-                    ui.selectable_value(&mut self.active_tab, 3, "🔬 Tester"); // تب جدید اضافه شد
+                    ui.selectable_value(&mut self.active_tab, 3, "🔬 Tester"); // تب جدید فاز 2
                 });
                 ui.separator();
                 egui::ScrollArea::vertical().show(ui, |ui| {
@@ -357,38 +383,81 @@ impl eframe::App for AppState {
                             }
                         }
                         3 => {
-                            // --- بخش تنظیمات مربوط به Tester ---
-                            ui.heading(egui::RichText::new("🔬 Phase 2: Configuration Tester").color(egui::Color32::LIGHT_BLUE));
-                            ui.label(egui::RichText::new("Requires xray-knife binary.").small().color(egui::Color32::GRAY));
+                            // تب تستر - فاز دوم
+                            ui.heading(egui::RichText::new("🔬 Phase 2 Tester Engine").color(egui::Color32::LIGHT_BLUE));
+                            ui.label(egui::RichText::new("Validates scraped configs directly using xray-knife.").small().color(egui::Color32::GRAY));
                             ui.add_space(10.0);
-                            
-                            ui.checkbox(&mut self.config.tester.enabled, "Enable Testing Phase");
-                            
+
+                            ui.checkbox(&mut self.config.tester.enabled, "Enable Xray-Knife Tester");
+
+                            egui::Frame::none()
+                                .fill(egui::Color32::from_rgb(25, 28, 40))
+                                .rounding(6.0)
+                                .inner_margin(10.0)
+                                .show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.label("Concurrent Tests:");
+                                        ui.add(egui::DragValue::new(&mut self.config.tester.concurrent_tests).range(1..=100));
+                                    });
+                                    ui.horizontal(|ui| {
+                                        ui.label("Timeout (secs):");
+                                        ui.add(egui::DragValue::new(&mut self.config.tester.timeout_secs).range(1..=30));
+                                    });
+                                    ui.horizontal(|ui| {
+                                        ui.label("Test URL:");
+                                        ui.text_edit_singleline(&mut self.config.tester.test_url);
+                                    });
+                                });
+
+                            ui.add_space(20.0);
+                            ui.separator();
                             ui.add_space(10.0);
-                            ui.group(|ui| {
-                                ui.set_enabled(self.config.tester.enabled); // غیرفعال شدن گزینه‌ها در صورت خاموش بودن تستر
-                                
-                                ui.horizontal(|ui| {
-                                    ui.label("Concurrent Tests:");
-                                    ui.add(egui::DragValue::new(&mut self.config.tester.concurrent_tests).range(1..=100));
-                                });
-                                ui.horizontal(|ui| {
-                                    ui.label("Timeout (Seconds):");
-                                    ui.add(egui::DragValue::new(&mut self.config.tester.timeout_secs).range(1..=30));
-                                });
-                                
-                                ui.add_space(5.0);
-                                ui.label("Test URL (Direct download):");
-                                ui.text_edit_singleline(&mut self.config.tester.test_url);
-                                
-                                ui.add_space(5.0);
-                                ui.label("xray-knife path:");
+
+                            ui.heading(egui::RichText::new("🛠️ Core Downloader").color(egui::Color32::GOLD));
+                            
+                            ui.horizontal(|ui| {
+                                ui.label("Binary Path:");
                                 ui.text_edit_singleline(&mut self.config.tester.xray_knife_path);
-                                
-                                ui.add_space(10.0);
-                                ui.label(egui::RichText::new("⚠️ The tester strictly uses DIRECT connections and ignores system proxies to ensure realistic results.")
-                                    .color(egui::Color32::from_rgb(250, 190, 70)).small());
                             });
+
+                            ui.add_space(15.0);
+
+                            if self.is_downloading.load(Ordering::SeqCst) {
+                                ui.horizontal(|ui| {
+                                    ui.spinner();
+                                    ui.label(egui::RichText::new("Downloading & Extracting... Please wait.").color(egui::Color32::YELLOW));
+                                });
+                            } else {
+                                if ui.button(egui::RichText::new("📥 Download / Update xray-knife").size(14.0).color(egui::Color32::WHITE)).clicked() {
+                                    self.is_downloading.store(true, Ordering::SeqCst);
+                                    
+                                    let tx = self.event_tx.clone();
+                                    let target_path = self.config.tester.xray_knife_path.clone();
+                                    let config_clone = self.config.clone();
+                                    let downloading_flag = self.is_downloading.clone();
+
+                                    thread::spawn(move || {
+                                        // ساخت کلاینت دانلود با استفاده از پروکسی ست شده توسط کاربر در Phase 1
+                                        match build_client(&config_clone) {
+                                            Ok(client) => {
+                                                if let Err(e) = crate::updater::update_xray_knife(client, target_path, tx.clone()) {
+                                                    let _ = tx.send(AppEvent::Log(
+                                                        LogLevel::Error,
+                                                        format!("❌ Download Failed: {}", e)
+                                                    ));
+                                                }
+                                            },
+                                            Err(e) => {
+                                                let _ = tx.send(AppEvent::Log(
+                                                    LogLevel::Error,
+                                                    format!("❌ Failed to build network client for download: {}", e)
+                                                ));
+                                            }
+                                        }
+                                        downloading_flag.store(false, Ordering::SeqCst);
+                                    });
+                                }
+                            }
                         }
                         _ => {}
                     }
@@ -447,16 +516,16 @@ impl eframe::App for AppState {
     }
 }
 
-// برای کامپایل صحیح با `cargo run` یا `cargo build` به این بخش نیز نیاز دارید.
-fn main() -> Result<(), eframe::Error> {
+fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1100.0, 750.0])
             .with_min_inner_size([900.0, 600.0]),
         ..Default::default()
     };
+
     eframe::run_native(
-        "Telegram Config Collector - Ultra Fast Tester",
+        "Telegram Config Collector Phase 2",
         options,
         Box::new(|_cc| Ok(Box::new(AppState::bootstrap()))),
     )
