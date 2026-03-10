@@ -22,7 +22,7 @@ fn get_available_port(start: u16) -> u16 {
         }
         port += 1;
         if port > 65000 {
-            return start; // Fallback
+            return start; // بازگشت به پورت پیش‌فرض در صورت پر بودن همه پورت‌ها (بعید است اتفاق بیفتد)
         }
     }
 }
@@ -69,7 +69,7 @@ pub fn filter_working_configs(
         let cfg = tester_cfg.clone();
         let stop = stop_flag.clone();
         let tx_c = tx.clone();
-        let initial_port = base_port + (i as u16) * 5; // فاصله پورت‌ها برای اطمینان
+        let initial_port = base_port + (i as u16) * 10; // فاصله 10 تایی بین پورت‌ها برای اطمینان بیشتر
 
         handles.push(thread::spawn(move || {
             loop {
@@ -86,16 +86,17 @@ pub fn filter_working_configs(
                 // دریافت پورت خالی ایمن برای این ترد
                 let p = get_available_port(initial_port);
 
-                // 1. اجرای xray-knife در پس‌زمینه
+                // 1. اجرای xray-knife در پس‌زمینه (استفاده از stdin/stdout نال برای جلوگیری از قفل شدن)
                 let mut child = match Command::new(&cfg.xray_knife_path)
                     .args(&["proxy", "--inbound", "socks", "--port", &p.to_string(), "-c", &config_str])
                     .stdout(Stdio::null())
                     .stderr(Stdio::null())
+                    .stdin(Stdio::null())
                     .spawn() {
                         Ok(c) => c,
                         Err(e) => {
                             log_worker(&tx_c, LogLevel::Error, format!("⚠️ xray-knife Missing! Path: '{}'. Error: {}", cfg.xray_knife_path, e));
-                            break; // خروج ترد در صورت عدم یافتن ابزار
+                            break; // خروج کامل ترد در صورت عدم یافتن فایل ابزار
                         }
                     };
 
@@ -104,6 +105,7 @@ pub fn filter_working_configs(
 
                 if stop.load(Ordering::SeqCst) {
                     let _ = child.kill();
+                    let _ = child.wait();
                     break;
                 }
 
@@ -113,17 +115,17 @@ pub fn filter_working_configs(
                 // 2. ساخت کلاینت دایرکت، صرفاً متصل به این پورت محلی
                 if let Ok(loop_proxy) = reqwest::Proxy::all(&loop_proxy_url) {
                     if let Ok(client) = ClientBuilder::new()
-                        .no_proxy() // مهم: غیرفعال کردن صد در صدی پروکسی سیستم
-                        .proxy(loop_proxy) // اعمال پروکسی محلی xray-knife
-                        .timeout(Duration::from_secs(cfg.timeout_secs)) // 6 ثانیه مهلت دانلود
+                        .no_proxy() // مهم: غیرفعال کردن صد در صدی پروکسی سیستم تا تست واقعی باشد
+                        .proxy(loop_proxy) // اعمال پروکسی محلی تولید شده توسط xray-knife
+                        .timeout(Duration::from_secs(cfg.timeout_secs)) // 6 ثانیه مهلت برای دریافت پاسخ
                         .danger_accept_invalid_certs(true)
                         .build() {
                             
-                            // 3. تلاش برای دانلود فایل
+                            // 3. تلاش برای دانلود فایل/محتوا از لینک تست
                             if let Ok(mut resp) = client.get(&cfg.test_url).send() {
                                 if resp.status().is_success() {
                                     let mut buf = [0; 512];
-                                    // تست دریافت حجم بزرگتر از 0 کیلوبایت
+                                    // تست دریافت حجم بزرگتر از 0 بایت (اثبات برقراری کانکشن و تبادل ترافیک)
                                     if let Ok(read_bytes) = resp.read(&mut buf) {
                                         if read_bytes > 0 {
                                             is_working = true;
@@ -134,20 +136,23 @@ pub fn filter_working_configs(
                     }
                 }
 
-                // 4. بستن اجباری و پاکسازی پروسه xray-knife
+                // 4. بستن اجباری و پاکسازی پروسه xray-knife برای جلوگیری از مصرف رم و ایجاد Zombie
                 let _ = child.kill();
-                let _ = child.wait(); // جلوگیری از ایجاد پردازش‌های Zombie
+                let _ = child.wait(); 
 
                 if is_working {
                     w.lock().unwrap().insert(config_str.clone());
+                    // چاپ لاگ موفقیت در کنسول (با رنگ سبز)
                     log_worker(&tx_c, LogLevel::Success, format!("✔️ [PASS] {}", proto));
                 } else {
+                    // چاپ لاگ خطا/تایم‌اوت در کنسول (با رنگ خاکستری/دیباگ)
                     log_worker(&tx_c, LogLevel::Debug, format!("❌ [TIMEOUT/0KB] {}", proto));
                 }
             }
         }));
     }
 
+    // منتظر ماندن تا اتمام کار تمام تردها
     for h in handles {
         let _ = h.join();
     }
@@ -162,8 +167,9 @@ pub fn filter_working_configs(
 
     log_worker(&tx, LogLevel::Success, format!("🏁 Testing Complete: {}/{} passed Phase 2.", passed_count, total));
 
-    // 5. اعمال فیلتر روی نقشه‌ی اصلی کانفیگ‌ها
+    // 5. اعمال فیلتر نهایی روی نقشه‌ی اصلی کانفیگ‌ها
     for (proto, links) in configs_map.iter_mut() {
+        // پروتکل‌هایی که قابل تست نبودند دست‌نخورده باقی می‌مانند
         if !NON_MIXED_PROTOCOLS.contains(&proto.as_str()) {
             links.retain(|link| working_set.contains(link));
         }
