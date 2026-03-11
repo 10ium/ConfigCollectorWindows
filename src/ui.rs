@@ -677,6 +677,7 @@ For speed test on Telegram links, keep bytes-query disabled.").small().color(egu
                         4 => {
                             ui.heading(egui::RichText::new("📤 Phase 5 - Telegram Publisher").color(egui::Color32::LIGHT_BLUE));
                             ui.label(egui::RichText::new("Sends output/tested/new_only/mixed.txt to your Telegram channel/group via bot API using app proxy settings.").small().color(egui::Color32::GRAY));
+                            ui.label(egui::RichText::new("If you get chat not found: add bot to channel/group, grant post permission, then use @channelusername (public) or -100... id (private).").small().color(egui::Color32::from_rgb(250, 190, 70)));
                             ui.add_space(8.0);
 
                             ui.checkbox(&mut self.config.phase5_telegram.enabled, "Enable Phase 5 Telegram Publish");
