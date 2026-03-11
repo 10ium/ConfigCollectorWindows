@@ -427,7 +427,6 @@ impl eframe::App for AppState {
                             ui.checkbox(&mut self.config.output_new_only_enabled, "Save New Configs Only (new_only)");
                             ui.checkbox(&mut self.config.output_append_unique_enabled, "Backup Unique Configs (append_unique)");
 
-                            // --- بخش جدید اضافه شده برای آپدیت خود برنامه ---
                             ui.add_space(15.0);
                             ui.heading(egui::RichText::new("🔄 Application Update").color(egui::Color32::from_rgb(200, 150, 255)));
                             ui.horizontal(|ui| {
@@ -614,10 +613,17 @@ For speed test on Telegram links, keep bytes-query disabled.").small().color(egu
                                         ui.label("Top by Ping for Speed:");
                                         ui.add(egui::DragValue::new(&mut self.config.tester.speed_test_top_count).range(1..=10_000));
                                     });
+                                    
+                                    ui.add_space(5.0);
+                                    
+                                    // --- چک‌باکس جدید Insecure ---
+                                    ui.checkbox(&mut self.config.tester.allow_insecure, "Allow Insecure TLS (--insecure)")
+                                        .on_hover_text("Bypasses invalid SSL certificates. Crucial for finding free/leaked Telegram configs.");
+                                        
                                     ui.horizontal(|ui| {
                                         ui.label("Extra xray-knife args:");
                                         ui.text_edit_singleline(&mut self.config.tester.extra_xray_args)
-                                            .on_hover_text("Any extra flags supported by xray-knife http (advanced). Example: --insecure");
+                                            .on_hover_text("Any extra flags supported by xray-knife http (advanced). Example: --xfdb");
                                     });
                                     ui.checkbox(&mut self.config.tester.append_ping_flag, "Append Ping to Config Name");
                                     ui.checkbox(&mut self.config.tester.append_speed_flag, "Append Download Speed to Config Name");
