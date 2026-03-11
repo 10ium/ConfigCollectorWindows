@@ -19,9 +19,7 @@ pub const NON_MIXED_PROTOCOLS: [&str; 8] = [
 
 pub const CLOUDFLARE_DOMAINS: [&str; 4] = [
     ".workers.dev",
-    ".pages.dev",
-    ".trycloudflare.com",
-    "chatgpt.com",
+    ".pages.dev"
 ];
 
 pub fn is_windows_compatible(link: &str) -> bool {
