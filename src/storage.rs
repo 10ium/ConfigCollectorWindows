@@ -258,3 +258,42 @@ pub fn write_mixed_only(base_dir: &Path, mixed_links: &BTreeSet<String>) -> Resu
 pub fn write_mixed_only_append(base_dir: &Path, mixed_links: &BTreeSet<String>) -> Result<()> {
     save_content_append(base_dir, "mixed", mixed_links)
 }
+
+pub fn write_flat_file_and_base64(
+    base_dir: &Path,
+    filename: &str,
+    content: &BTreeSet<String>,
+) -> Result<()> {
+    fs::create_dir_all(base_dir)?;
+    let txt = content.iter().cloned().collect::<Vec<_>>().join(
+        "
+",
+    );
+    fs::write(base_dir.join(format!("{filename}.txt")), &txt)?;
+    fs::write(
+        base_dir.join(format!("{filename}_base64.txt")),
+        B64.encode(txt.as_bytes()),
+    )?;
+    Ok(())
+}
+
+pub fn write_flat_file_and_base64_append(
+    base_dir: &Path,
+    filename: &str,
+    content: &BTreeSet<String>,
+) -> Result<()> {
+    fs::create_dir_all(base_dir)?;
+    let txt_path = base_dir.join(format!("{filename}.txt"));
+    let mut merged = read_existing_set(&txt_path)?;
+    merged.extend(content.iter().cloned());
+    let txt = merged.iter().cloned().collect::<Vec<_>>().join(
+        "
+",
+    );
+    fs::write(&txt_path, &txt)?;
+    fs::write(
+        base_dir.join(format!("{filename}_base64.txt")),
+        B64.encode(txt.as_bytes()),
+    )?;
+    Ok(())
+}
