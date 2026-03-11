@@ -88,6 +88,7 @@ pub struct TesterConfig {
     pub speed_test_from_ping_passed_only: bool,
     pub extra_xray_args: String,
     pub xray_knife_path: String,
+    pub allow_insecure: bool, // متغیر جدید اضافه شده برای Insecure TLS
 }
 
 impl Default for TesterConfig {
@@ -118,6 +119,7 @@ impl Default for TesterConfig {
             } else {
                 "xray-knife".to_string()
             },
+            allow_insecure: true, // بصورت پیش‌فرض برای کانفیگ‌های رایگان فعال است
         }
     }
 }
@@ -226,7 +228,7 @@ pub struct AppConfig {
     pub output_directory: String,
     pub output_new_only_enabled: bool,
     pub output_append_unique_enabled: bool,
-    pub app_update_repo: String, // جایگزین شدن لینک مستقیم با نام مخزن گیت‌هاب
+    pub app_update_repo: String,
     pub protocol_rules: BTreeMap<String, ProtocolRule>,
     pub tester: TesterConfig,
     pub clash_converter: ClashConverterConfig,
