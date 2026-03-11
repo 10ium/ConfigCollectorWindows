@@ -44,7 +44,7 @@ impl AppState {
             logs: vec![LogMessage {
                 time: Local::now().format("%H:%M:%S").to_string(),
                 level: LogLevel::Info,
-                text: "🖥️ System Boot: Smart Modular Engine Initialized (Phase 2).".to_string(),
+                text: "🖥️ System Boot: Smart Modular Engine Initialized.".to_string(),
             }],
             total_configs: 0,
             by_protocol: BTreeMap::new(),
@@ -166,7 +166,7 @@ impl AppState {
         let stop_flag = self.stop_flag.clone();
 
         self.worker_handle = Some(thread::spawn(move || {
-            if let Err(err) = run_worker(cfg, channels_raw, stop_flag, tx.clone()) {
+            if let Err(err) = crate::scraper::run_worker(cfg, channels_raw, stop_flag, tx.clone()) {
                 let _ = tx.send(AppEvent::Log(
                     LogLevel::Error,
                     format!("🔥 CRASH: {}", err),
@@ -381,12 +381,11 @@ impl eframe::App for AppState {
                             ui.checkbox(&mut self.config.output_new_only_enabled, "Save New Configs Only (new_only)");
                             ui.checkbox(&mut self.config.output_append_unique_enabled, "Backup Unique Configs (append_unique)");
 
-                            // --- بخش جدید اضافه شده برای آپدیت خود برنامه ---
                             ui.add_space(15.0);
                             ui.heading(egui::RichText::new("🔄 Application Update").color(egui::Color32::from_rgb(200, 150, 255)));
                             ui.horizontal(|ui| {
                                 ui.label("GitHub Repo:");
-                                ui.text_edit_singleline(&mut self.config.app_update_repo).on_hover_text("Format: username/repository");
+                                ui.text_edit_singleline(&mut self.config.app_update_repo);
                             });
                             
                             ui.add_space(5.0);
@@ -394,12 +393,11 @@ impl eframe::App for AppState {
                             if self.is_downloading.load(Ordering::SeqCst) {
                                 ui.horizontal(|ui| {
                                     ui.spinner();
-                                    ui.label(egui::RichText::new("Processing update... Please wait.").color(egui::Color32::YELLOW));
+                                    ui.label(egui::RichText::new("Processing update...").color(egui::Color32::YELLOW));
                                 });
                             } else {
                                 if ui.button(egui::RichText::new("🚀 Update Collector App").size(13.0).color(egui::Color32::WHITE)).clicked() {
                                     self.is_downloading.store(true, Ordering::SeqCst);
-                                    
                                     let tx = self.event_tx.clone();
                                     let repo_name = self.config.app_update_repo.clone();
                                     let config_clone = self.config.clone();
@@ -408,19 +406,9 @@ impl eframe::App for AppState {
                                     thread::spawn(move || {
                                         match build_client(&config_clone) {
                                             Ok(client) => {
-                                                if let Err(e) = crate::updater::update_main_app(client, repo_name, tx.clone()) {
-                                                    let _ = tx.send(AppEvent::Log(
-                                                        LogLevel::Error,
-                                                        format!("❌ App Update Failed: {}", e)
-                                                    ));
-                                                }
+                                                let _ = crate::updater::update_main_app(client, repo_name, tx.clone());
                                             },
-                                            Err(e) => {
-                                                let _ = tx.send(AppEvent::Log(
-                                                    LogLevel::Error,
-                                                    format!("❌ Failed to build network client: {}", e)
-                                                ));
-                                            }
+                                            _ => {}
                                         }
                                         downloading_flag.store(false, Ordering::SeqCst);
                                     });
@@ -429,7 +417,6 @@ impl eframe::App for AppState {
                         }
                         1 => {
                             ui.heading(egui::RichText::new("📡 Target Channels").color(egui::Color32::LIGHT_BLUE));
-                            ui.label(egui::RichText::new("One ID/Link per line:").small().color(egui::Color32::GRAY));
                             ui.add_sized(
                                 [ui.available_width(), ui.available_height() - 20.0],
                                 egui::TextEdit::multiline(&mut self.channels_text).font(egui::TextStyle::Monospace),
@@ -437,101 +424,43 @@ impl eframe::App for AppState {
                         }
                         2 => {
                             ui.heading(egui::RichText::new("🎯 Protocols Filter").color(egui::Color32::LIGHT_BLUE));
-                            ui.label(egui::RichText::new("Set Max Count to 0 for UNLIMITED").small().color(egui::Color32::GRAY));
-                            
                             for (name, rule) in &mut self.config.protocol_rules {
                                 ui.horizontal(|ui| {
                                     ui.checkbox(&mut rule.enabled, name);
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        let response = ui.add(egui::DragValue::new(&mut rule.max_count).range(0..=500000));
-                                        if rule.max_count == 0 {
-                                            response.on_hover_text("0 = Unlimited");
-                                            ui.label(egui::RichText::new("Unlimited").color(egui::Color32::from_rgb(60, 180, 120)).small());
-                                        }
+                                        ui.add(egui::DragValue::new(&mut rule.max_count).range(0..=500000));
                                     });
                                 });
                             }
                         }
                         3 => {
                             ui.heading(egui::RichText::new("🔬 Phase 2 Tester Engine").color(egui::Color32::LIGHT_BLUE));
-                            ui.label(egui::RichText::new("Validates scraped configs directly using xray-knife.").small().color(egui::Color32::GRAY));
-                            ui.add_space(10.0);
-
                             ui.checkbox(&mut self.config.tester.enabled, "Enable Xray-Knife Tester");
-
-                            egui::Frame::none()
-                                .fill(egui::Color32::from_rgb(25, 28, 40))
-                                .rounding(6.0)
-                                .inner_margin(10.0)
-                                .show(ui, |ui| {
-                                    ui.horizontal(|ui| {
-                                        ui.label("Concurrent Tests:");
-                                        ui.add(egui::DragValue::new(&mut self.config.tester.concurrent_tests).range(1..=100));
-                                    });
-                                    ui.horizontal(|ui| {
-                                        ui.label("Timeout (secs):");
-                                        ui.add(egui::DragValue::new(&mut self.config.tester.timeout_secs).range(1..=30));
-                                    });
-                                    ui.horizontal(|ui| {
-                                        ui.label("Test URL:");
-                                        ui.text_edit_singleline(&mut self.config.tester.test_url);
-                                    });
-                                    
-                                    ui.add_space(5.0);
-                                    ui.separator();
-                                    ui.add_space(5.0);
-
-                                    ui.checkbox(&mut self.config.tester.speed_test_enabled, "Enable Speed Test (Download bytes)");
-                                    ui.checkbox(&mut self.config.tester.append_ping_flag, "Append Ping to Config Name (e.g. [Ping:120ms])");
-                                });
-
-                            ui.add_space(20.0);
-                            ui.separator();
-                            ui.add_space(10.0);
-
-                            ui.heading(egui::RichText::new("🛠️ Core Downloader").color(egui::Color32::GOLD));
                             
-                            ui.horizontal(|ui| {
-                                ui.label("Binary Path:");
-                                ui.text_edit_singleline(&mut self.config.tester.xray_knife_path);
+                            egui::Frame::none().fill(egui::Color32::from_rgb(25, 28, 40)).rounding(6.0).inner_margin(10.0).show(ui, |ui| {
+                                ui.horizontal(|ui| { ui.label("Concurrent:"); ui.add(egui::DragValue::new(&mut self.config.tester.concurrent_tests).range(1..=100)); });
+                                ui.horizontal(|ui| { ui.label("Timeout:"); ui.add(egui::DragValue::new(&mut self.config.tester.timeout_secs).range(1..=30)); });
+                                ui.horizontal(|ui| { ui.label("Ping URL:"); ui.text_edit_singleline(&mut self.config.tester.ping_url); });
+                                ui.checkbox(&mut self.config.tester.ping_enabled, "Ping Test");
+                                ui.horizontal(|ui| { ui.label("Speed URL:"); ui.text_edit_singleline(&mut self.config.tester.speed_test_url); });
+                                ui.checkbox(&mut self.config.tester.speed_test_enabled, "Speed Test");
+                                ui.checkbox(&mut self.config.tester.append_ping_flag, "Add Ping to Name");
                             });
 
-                            ui.add_space(15.0);
-
-                            if self.is_downloading.load(Ordering::SeqCst) {
-                                ui.horizontal(|ui| {
-                                    ui.spinner();
-                                    ui.label(egui::RichText::new("Downloading & Extracting... Please wait.").color(egui::Color32::YELLOW));
+                            ui.add_space(20.0);
+                            if ui.button("📥 Download/Update Xray-Knife").clicked() {
+                                self.is_downloading.store(true, Ordering::SeqCst);
+                                let tx = self.event_tx.clone();
+                                let path = self.config.tester.xray_knife_path.clone();
+                                let config_clone = self.config.clone();
+                                let downloading_flag = self.is_downloading.clone();
+                                thread::spawn(move || {
+                                    match build_client(&config_clone) {
+                                        Ok(client) => { let _ = crate::updater::update_xray_knife(client, path, tx); },
+                                        _ => {}
+                                    }
+                                    downloading_flag.store(false, Ordering::SeqCst);
                                 });
-                            } else {
-                                if ui.button(egui::RichText::new("📥 Download / Update xray-knife").size(14.0).color(egui::Color32::WHITE)).clicked() {
-                                    self.is_downloading.store(true, Ordering::SeqCst);
-                                    
-                                    let tx = self.event_tx.clone();
-                                    let target_path = self.config.tester.xray_knife_path.clone();
-                                    let config_clone = self.config.clone();
-                                    let downloading_flag = self.is_downloading.clone();
-
-                                    thread::spawn(move || {
-                                        match build_client(&config_clone) {
-                                            Ok(client) => {
-                                                if let Err(e) = crate::updater::update_xray_knife(client, target_path, tx.clone()) {
-                                                    let _ = tx.send(AppEvent::Log(
-                                                        LogLevel::Error,
-                                                        format!("❌ Download Failed: {}", e)
-                                                    ));
-                                                }
-                                            },
-                                            Err(e) => {
-                                                let _ = tx.send(AppEvent::Log(
-                                                    LogLevel::Error,
-                                                    format!("❌ Failed to build network client for download: {}", e)
-                                                ));
-                                            }
-                                        }
-                                        downloading_flag.store(false, Ordering::SeqCst);
-                                    });
-                                }
                             }
                         }
                         _ => {}
@@ -542,50 +471,10 @@ impl eframe::App for AppState {
         egui::CentralPanel::default()
             .frame(egui::Frame::default().fill(egui::Color32::from_rgb(13, 15, 23)).inner_margin(15.0))
             .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    ui.group(|ui| {
-                        ui.label(egui::RichText::new("Extracted Total:").color(egui::Color32::GRAY));
-                        ui.label(egui::RichText::new(self.total_configs.to_string()).size(22.0).strong().color(egui::Color32::from_rgb(30, 180, 120)));
-                    });
+                ui.label(format!("Total Extracted: {}", self.total_configs));
+                egui::ScrollArea::vertical().stick_to_bottom(true).show(ui, |ui| {
+                    for log in &self.logs { ui.label(egui::RichText::new(&log.text).monospace()); }
                 });
-
-                ui.add_space(10.0);
-                egui::Frame::none()
-                    .fill(egui::Color32::from_rgb(8, 10, 15))
-                    .rounding(8.0)
-                    .inner_margin(10.0)
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.heading(egui::RichText::new("Terminal Log").color(egui::Color32::WHITE));
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                if ui.button("Clear").clicked() { self.logs.clear(); }
-                                if ui.button("Copy").clicked() {
-                                    let text = self.logs.iter().map(|l| format!("[{}] {}", l.time, l.text)).collect::<Vec<_>>().join("\n");
-                                    ctx.output_mut(|o| o.copied_text = text);
-                                }
-                            });
-                        });
-                        ui.separator();
-                        egui::ScrollArea::vertical()
-                            .stick_to_bottom(true)
-                            .auto_shrink([false; 2])
-                            .show(ui, |ui| {
-                                ui.spacing_mut().item_spacing.y = 5.0;
-                                for log in self.logs.iter().rev().take(500).rev() {
-                                    let color = match log.level {
-                                        LogLevel::Debug => egui::Color32::from_rgb(100, 110, 130),
-                                        LogLevel::Info => egui::Color32::from_rgb(120, 200, 255),
-                                        LogLevel::Success => egui::Color32::from_rgb(80, 240, 150),
-                                        LogLevel::Warning => egui::Color32::from_rgb(250, 190, 70),
-                                        LogLevel::Error => egui::Color32::from_rgb(255, 90, 90),
-                                    };
-                                    ui.horizontal_wrapped(|ui| {
-                                        ui.label(egui::RichText::new(format!("[{}]", log.time)).color(egui::Color32::from_rgb(80, 90, 110)).monospace().small());
-                                        ui.label(egui::RichText::new(&log.text).color(color).monospace());
-                                    });
-                                }
-                            });
-                    });
             });
         ctx.request_repaint_after(Duration::from_millis(500));
     }
