@@ -45,7 +45,7 @@ fn format_speed(download_kb: f64) -> String {
     if download_kb >= 1024.0 {
         format!("{:.1}MB", download_kb / 1024.0)
     } else {
-        format!("{}KB", download_kb.max(0.0).round() as u64)
+        format!("{:.1}KB", download_kb.max(0.1))
     }
 }
 
@@ -450,7 +450,15 @@ pub fn filter_working_configs(
             let mut speed_results = parse_csv_results(&speed_csv);
             speed_results.retain(|item| item.download_kb.unwrap_or(0.0) > 0.0);
             phase2.speed_passed_mixed = speed_results.iter().map(|r| r.link.clone()).collect();
-            final_selected = speed_results;
+            if speed_results.is_empty() {
+                log_worker(
+                    &tx,
+                    LogLevel::Warning,
+                    "⚠️ Speed test returned 0 healthy configs. Keeping previous stage results for final output.".to_string(),
+                );
+            } else {
+                final_selected = speed_results;
+            }
         } else {
             log_worker(
                 &tx,
