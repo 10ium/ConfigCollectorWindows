@@ -1,3 +1,5 @@
+#![windows_subsystem = "windows"]
+
 pub mod config;
 pub mod scraper;
 pub mod storage;
