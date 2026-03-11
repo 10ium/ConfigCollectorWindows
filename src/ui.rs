@@ -100,6 +100,39 @@ impl AppState {
         });
     }
 
+    // تست دسترسی دایرکت برای اطمینان از صحت فاز 2 (بدون پروکسی)
+    pub fn test_direct_connection(&mut self) {
+        let tx = self.event_tx.clone();
+        self.add_log(LogLevel::Info, "Testing direct system connection (No Proxy) to soft98.ir...".to_string());
+        
+        thread::spawn(move || {
+            let start = Instant::now();
+            let direct_client = reqwest::blocking::ClientBuilder::new()
+                .no_proxy()
+                .timeout(Duration::from_secs(10))
+                .danger_accept_invalid_certs(true)
+                .build();
+                
+            if let Ok(client) = direct_client {
+                match client.get("https://soft98.ir").send() {
+                    Ok(resp) if resp.status().is_success() => {
+                        let elapsed = start.elapsed().as_millis();
+                        let _ = tx.send(AppEvent::Log(
+                            LogLevel::Success,
+                            format!("🌐 Direct Connection Passed! soft98.ir loaded in {}ms", elapsed),
+                        ));
+                    }
+                    _ => {
+                        let _ = tx.send(AppEvent::Log(
+                            LogLevel::Error,
+                            "❌ Direct Connection Failed! Is your network blocked?".to_string(),
+                        ));
+                    }
+                }
+            }
+        });
+    }
+
     pub fn save_all_settings(&mut self) {
         if let Some(parent) = Path::new(CHANNELS_PATH).parent() {
             let _ = fs::create_dir_all(parent);
@@ -325,7 +358,8 @@ impl eframe::App for AppState {
                                         if ui.selectable_value(&mut self.config.proxy_type, ProxyType::None, "Direct").changed() { proxy_changed = true; }
                                     });
                                 
-                                if ui.button("🔄 Test").clicked() { proxy_changed = true; }
+                                if ui.button("🔄 Test Proxy").clicked() { proxy_changed = true; }
+                                if ui.button("🌐 Test Direct").clicked() { self.test_direct_connection(); }
                             });
                             
                             if proxy_changed { self.test_connection(); }
@@ -397,6 +431,14 @@ impl eframe::App for AppState {
                                         ui.label("Test URL:");
                                         ui.text_edit_singleline(&mut self.config.tester.test_url);
                                     });
+                                    
+                                    ui.add_space(5.0);
+                                    ui.separator();
+                                    ui.add_space(5.0);
+
+                                    // تنظیمات جدید تست سرعت و اضافه کردن پرچم پینگ
+                                    ui.checkbox(&mut self.config.tester.speed_test_enabled, "Enable Speed Test (Download bytes)");
+                                    ui.checkbox(&mut self.config.tester.append_ping_flag, "Append Ping to Config Name (e.g. [Ping:120ms])");
                                 });
 
                             ui.add_space(20.0);
