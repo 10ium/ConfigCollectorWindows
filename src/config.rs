@@ -85,6 +85,7 @@ pub struct TesterConfig {
     pub append_ping_flag: bool,
     pub append_speed_flag: bool,
     pub append_country_flag: bool,
+    pub speed_test_from_ping_passed_only: bool,
     pub extra_xray_args: String,
     pub xray_knife_path: String,
 }
@@ -110,12 +111,71 @@ impl Default for TesterConfig {
             append_ping_flag: false,
             append_speed_flag: false,
             append_country_flag: false,
+            speed_test_from_ping_passed_only: false,
             extra_xray_args: "".to_string(),
             xray_knife_path: if cfg!(windows) {
                 "xray-knife.exe".to_string()
             } else {
                 "xray-knife".to_string()
             },
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ClashProtocolRule {
+    pub enabled: bool,
+    pub max_count: usize,
+    pub priority: usize,
+}
+
+impl Default for ClashProtocolRule {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            max_count: 0,
+            priority: 99,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ClashConverterConfig {
+    pub enabled: bool,
+    pub output_full_config: bool,
+    pub total_limit: usize,
+    pub protocol_rules: BTreeMap<String, ClashProtocolRule>,
+}
+
+impl Default for ClashConverterConfig {
+    fn default() -> Self {
+        let mut protocol_rules = BTreeMap::new();
+        let defaults = [
+            ("vless", 1usize),
+            ("ss", 2),
+            ("trojan", 3),
+            ("vmess", 4),
+            ("hysteria2", 5),
+        ];
+
+        for (name, prio) in defaults {
+            protocol_rules.insert(
+                name.to_string(),
+                ClashProtocolRule {
+                    enabled: true,
+                    max_count: 0,
+                    priority: prio,
+                },
+            );
+        }
+
+        Self {
+            enabled: true,
+            output_full_config: false,
+            total_limit: 0,
+            protocol_rules,
         }
     }
 }
@@ -141,6 +201,7 @@ pub struct AppConfig {
     pub app_update_repo: String, // جایگزین شدن لینک مستقیم با نام مخزن گیت‌هاب
     pub protocol_rules: BTreeMap<String, ProtocolRule>,
     pub tester: TesterConfig,
+    pub clash_converter: ClashConverterConfig,
 }
 
 impl Default for AppConfig {
@@ -174,6 +235,7 @@ impl Default for AppConfig {
             app_update_repo: "10ium/ConfigCollectorWindows".to_string(),
             protocol_rules,
             tester: TesterConfig::default(),
+            clash_converter: ClashConverterConfig::default(),
         }
     }
 }
@@ -188,6 +250,22 @@ impl AppConfig {
                         .or_insert(ProtocolRule {
                             enabled: true,
                             max_count: 0,
+                        });
+                }
+                for (name, prio) in [
+                    ("vless", 1usize),
+                    ("ss", 2),
+                    ("trojan", 3),
+                    ("vmess", 4),
+                    ("hysteria2", 5),
+                ] {
+                    cfg.clash_converter
+                        .protocol_rules
+                        .entry(name.to_string())
+                        .or_insert(ClashProtocolRule {
+                            enabled: true,
+                            max_count: 0,
+                            priority: prio,
                         });
                 }
                 return cfg;

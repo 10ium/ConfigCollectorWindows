@@ -4,7 +4,7 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use crate::config::TesterConfig;
 use crate::scraper::{log_worker, AppEvent, LogLevel};
@@ -19,6 +19,12 @@ struct TestResult {
     delay_ms: Option<u128>,
     download_kb: Option<f64>,
     country: Option<String>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct Phase2Result {
+    pub ping_passed_mixed: BTreeSet<String>,
+    pub speed_passed_mixed: BTreeSet<String>,
 }
 
 fn country_to_flag(code: &str) -> &'static str {
@@ -39,7 +45,7 @@ fn format_speed(download_kb: f64) -> String {
     if download_kb >= 1024.0 {
         format!("{:.1}MB", download_kb / 1024.0)
     } else {
-        format!("{}KB", download_kb.max(0.0).round() as u64)
+        format!("{:.1}KB", download_kb.max(0.1))
     }
 }
 
@@ -215,9 +221,11 @@ pub fn filter_working_configs(
     tester_cfg: &TesterConfig,
     stop_flag: Arc<AtomicBool>,
     tx: Sender<AppEvent>,
-) {
+) -> Phase2Result {
+    let mut phase2 = Phase2Result::default();
+
     if !tester_cfg.enabled {
-        return;
+        return phase2;
     }
 
     let mut to_test = Vec::new();
@@ -235,25 +243,27 @@ pub fn filter_working_configs(
 
     let total = to_test.len();
     if total == 0 {
-        return;
+        return phase2;
     }
 
     if !tester_cfg.ping_test_enabled && !tester_cfg.speed_test_enabled {
         log_worker(
             &tx,
             LogLevel::Warning,
-            "⚠️ Tester is enabled but both Ping and Speed tests are disabled. Keeping original configs."
-                .to_string(),
+            "⚠️ Tester enabled but Ping/Speed are disabled.".to_string(),
         );
-        return;
+        return phase2;
     }
 
     log_worker(
         &tx,
-        LogLevel::Warning,
+        LogLevel::Info,
         format!(
-            "🔬 PHASE 2: Batch testing {} configs with xray-knife (Ping: {}, Speed: {}).",
-            total, tester_cfg.ping_test_enabled, tester_cfg.speed_test_enabled
+            "🔬 PHASE 2 START | total={} | ping={} | speed={} | chain_ping_to_speed={}",
+            total,
+            tester_cfg.ping_test_enabled,
+            tester_cfg.speed_test_enabled,
+            tester_cfg.speed_test_from_ping_passed_only
         ),
     );
 
@@ -262,20 +272,21 @@ pub fn filter_working_configs(
         log_worker(
             &tx,
             LogLevel::Error,
-            "❌ Failed to create temporary input file for tester.".to_string(),
+            "❌ Failed to create test input file.".to_string(),
         );
-        return;
+        return phase2;
     }
 
     if stop_flag.load(Ordering::SeqCst) {
         let _ = fs::remove_file(&input_path);
-        return;
+        return phase2;
     }
 
-    let mut selected = if tester_cfg.ping_test_enabled {
+    let mut ping_selected: Vec<TestResult> = Vec::new();
+    if tester_cfg.ping_test_enabled {
+        let ping_started = Instant::now();
         let ping_csv = build_temp_path("ping_test_results.csv");
         let timeout_ms = (tester_cfg.timeout_secs.max(1) * 1000).to_string();
-        let ping_url = tester_cfg.ping_test_url.clone();
 
         let mut args = vec![
             "http".to_string(),
@@ -288,29 +299,46 @@ pub fn filter_working_configs(
             "-x".to_string(),
             "csv".to_string(),
             "-u".to_string(),
-            ping_url,
+            tester_cfg.ping_test_url.clone(),
             "-a".to_string(),
             timeout_ms,
         ];
-
         append_extra_args(&mut args, &tester_cfg.extra_xray_args);
 
+        log_worker(
+            &tx,
+            LogLevel::Info,
+            format!("📍 Phase2/PING start -> {}", tester_cfg.ping_test_url),
+        );
         if !run_xray_knife(tester_cfg, &args) {
             log_worker(
                 &tx,
                 LogLevel::Error,
-                "❌ Ping test failed to execute via xray-knife.".to_string(),
+                "❌ Ping test failed to execute.".to_string(),
             );
             let _ = fs::remove_file(&input_path);
             let _ = fs::remove_file(&ping_csv);
-            return;
+            return phase2;
         }
 
-        let mut ping_selected = parse_csv_results(&ping_csv);
+        ping_selected = parse_csv_results(&ping_csv);
         ping_selected.retain(|r| r.delay_ms.is_some());
         ping_selected.sort_by_key(|r| r.delay_ms.unwrap_or(u128::MAX));
-
+        phase2.ping_passed_mixed = ping_selected.iter().map(|r| r.link.clone()).collect();
         let _ = fs::remove_file(&ping_csv);
+
+        log_worker(
+            &tx,
+            LogLevel::Success,
+            format!(
+                "✅ Phase2/PING done | passed={} | elapsed={}ms",
+                phase2.ping_passed_mixed.len(),
+                ping_started.elapsed().as_millis()
+            ),
+        );
+    }
+
+    let mut final_selected: Vec<TestResult> = if tester_cfg.ping_test_enabled {
         ping_selected
     } else {
         to_test
@@ -327,33 +355,41 @@ pub fn filter_working_configs(
     if stop_flag.load(Ordering::SeqCst) {
         let _ = fs::remove_file(&input_path);
         log_worker(&tx, LogLevel::Warning, "🛑 Tester interrupted.".to_string());
-        return;
+        return phase2;
     }
 
-    if selected.is_empty() {
+    if final_selected.is_empty() {
         let _ = fs::remove_file(&input_path);
         log_worker(
             &tx,
             LogLevel::Warning,
-            "⚠️ No config passed ping phase.".to_string(),
+            "⚠️ No configs left after ping phase.".to_string(),
         );
         for (proto, links) in configs_map.iter_mut() {
             if !NON_MIXED_PROTOCOLS.contains(&proto.as_str()) {
                 links.clear();
             }
         }
-        return;
+        return phase2;
     }
 
     if tester_cfg.speed_test_enabled {
+        let speed_started = Instant::now();
         let speed_input = build_temp_path("speed_candidates.txt");
         let speed_csv = build_temp_path("speed_results.csv");
-        let top_n = tester_cfg.speed_test_top_count.max(1).min(selected.len());
-        let speed_targets: Vec<String> = selected
-            .iter()
-            .take(top_n)
-            .map(|r| r.link.clone())
-            .collect();
+
+        let mut speed_targets: Vec<String> =
+            if tester_cfg.speed_test_from_ping_passed_only && tester_cfg.ping_test_enabled {
+                final_selected.iter().map(|r| r.link.clone()).collect()
+            } else {
+                to_test.clone()
+            };
+
+        let top_n = tester_cfg
+            .speed_test_top_count
+            .max(1)
+            .min(speed_targets.len());
+        speed_targets.truncate(top_n);
 
         if fs::write(&speed_input, speed_targets.join("\n")).is_err() {
             let _ = fs::remove_file(&input_path);
@@ -362,7 +398,7 @@ pub fn filter_working_configs(
                 LogLevel::Error,
                 "❌ Failed to create speed candidates file.".to_string(),
             );
-            return;
+            return phase2;
         }
 
         let speed_url = if tester_cfg.speed_url_supports_bytes_query
@@ -399,31 +435,53 @@ pub fn filter_working_configs(
             "csv".to_string(),
             "-p".to_string(),
             "-u".to_string(),
-            speed_url,
+            speed_url.clone(),
             "-a".to_string(),
             (tester_cfg.speed_test_timeout_secs.max(1) * 1000).to_string(),
         ];
-
         append_extra_args(&mut args, &tester_cfg.extra_xray_args);
 
+        log_worker(
+            &tx,
+            LogLevel::Info,
+            format!("🚀 Phase2/SPEED start -> {}", speed_url),
+        );
         if run_xray_knife(tester_cfg, &args) {
             let mut speed_results = parse_csv_results(&speed_csv);
             speed_results.retain(|item| item.download_kb.unwrap_or(0.0) > 0.0);
-            if !speed_results.is_empty() {
-                selected = speed_results;
+            phase2.speed_passed_mixed = speed_results.iter().map(|r| r.link.clone()).collect();
+            if speed_results.is_empty() {
+                log_worker(
+                    &tx,
+                    LogLevel::Warning,
+                    "⚠️ Speed test returned 0 healthy configs. Keeping previous stage results for final output.".to_string(),
+                );
             } else {
-                selected.clear();
+                final_selected = speed_results;
             }
         } else {
             log_worker(
                 &tx,
                 LogLevel::Warning,
-                "⚠️ Speed test failed to execute. Keeping ping-only results.".to_string(),
+                "⚠️ Speed test failed to execute. Keeping previous stage results.".to_string(),
             );
+            phase2.speed_passed_mixed = final_selected.iter().map(|r| r.link.clone()).collect();
         }
+
+        log_worker(
+            &tx,
+            LogLevel::Success,
+            format!(
+                "✅ Phase2/SPEED done | passed={} | elapsed={}ms",
+                phase2.speed_passed_mixed.len(),
+                speed_started.elapsed().as_millis()
+            ),
+        );
 
         let _ = fs::remove_file(&speed_input);
         let _ = fs::remove_file(&speed_csv);
+    } else {
+        phase2.speed_passed_mixed = final_selected.iter().map(|r| r.link.clone()).collect();
     }
 
     let _ = fs::remove_file(&input_path);
@@ -435,13 +493,12 @@ pub fn filter_working_configs(
     }
 
     let mut passed_count = 0usize;
-    for item in selected {
+    for item in final_selected {
         let Some(proto) = proto_by_link.get(&item.link) else {
             continue;
         };
 
         let final_config = append_labels_to_config(&item.link, tester_cfg, &item);
-
         configs_map
             .entry(proto.clone())
             .or_default()
@@ -453,8 +510,9 @@ pub fn filter_working_configs(
         &tx,
         LogLevel::Success,
         format!(
-            "🏁 Testing Complete: {}/{} passed Phase 2.",
+            "🏁 PHASE 2 COMPLETE | final_passed={}/{}",
             passed_count, total
         ),
     );
+    phase2
 }

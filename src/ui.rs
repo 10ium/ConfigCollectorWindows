@@ -44,7 +44,7 @@ impl AppState {
             logs: vec![LogMessage {
                 time: Local::now().format("%H:%M:%S").to_string(),
                 level: LogLevel::Info,
-                text: "🖥️ System Boot: Smart Modular Engine Initialized (Phase 2).".to_string(),
+                text: "🖥️ System Boot: Smart Modular Engine Initialized (Phase 4).".to_string(),
             }],
             total_configs: 0,
             by_protocol: BTreeMap::new(),
@@ -257,7 +257,7 @@ impl eframe::App for AppState {
                                 .color(egui::Color32::from_rgb(240, 248, 255)),
                         );
                         ui.label(
-                            egui::RichText::new("Modular Smart Engine - Phase 2")
+                            egui::RichText::new("Modular Smart Engine - Phase 4")
                                 .size(13.0)
                                 .color(egui::Color32::from_rgb(120, 140, 160)),
                         );
@@ -481,7 +481,7 @@ impl eframe::App for AppState {
                             );
                         }
                         2 => {
-                            ui.heading(egui::RichText::new("🎯 Protocols Filter").color(egui::Color32::LIGHT_BLUE));
+                            ui.heading(egui::RichText::new("🎯 Phase 1 Protocols Filter").color(egui::Color32::LIGHT_BLUE));
                             ui.label(egui::RichText::new("Set Max Count to 0 for UNLIMITED").small().color(egui::Color32::GRAY));
 
                             for (name, rule) in &mut self.config.protocol_rules {
@@ -494,6 +494,27 @@ impl eframe::App for AppState {
                                             ui.label(egui::RichText::new("Unlimited").color(egui::Color32::from_rgb(60, 180, 120)).small());
                                         }
                                     });
+                                });
+                            }
+
+                            ui.add_space(12.0);
+                            ui.separator();
+                            ui.add_space(8.0);
+                            ui.heading(egui::RichText::new("🧩 Phase 4 - Clash Output Controls").color(egui::Color32::GOLD));
+                            ui.checkbox(&mut self.config.clash_converter.enabled, "Enable Phase 3->4 Clash conversion output");
+                            ui.checkbox(&mut self.config.clash_converter.output_full_config, "Output full Clash config (otherwise provider only)");
+                            ui.horizontal(|ui| {
+                                ui.label("Total convert limit (0=unlimited):");
+                                ui.add(egui::DragValue::new(&mut self.config.clash_converter.total_limit).range(0..=200000));
+                            });
+
+                            for (proto, rule) in &mut self.config.clash_converter.protocol_rules {
+                                ui.horizontal(|ui| {
+                                    ui.checkbox(&mut rule.enabled, format!("{}", proto));
+                                    ui.label("max:");
+                                    ui.add(egui::DragValue::new(&mut rule.max_count).range(0..=100000));
+                                    ui.label("priority:");
+                                    ui.add(egui::DragValue::new(&mut rule.priority).range(1..=1000));
                                 });
                             }
                         }
@@ -552,6 +573,7 @@ For speed test on Telegram links, keep bytes-query disabled.").small().color(egu
                                     ui.add_space(5.0);
 
                                     ui.checkbox(&mut self.config.tester.speed_test_enabled, "Enable Speed Test (Download bytes)");
+                                    ui.checkbox(&mut self.config.tester.speed_test_from_ping_passed_only, "Chain Mode: Speed test only from ping-passed configs");
                                     ui.horizontal(|ui| {
                                         ui.label("Speed URL:");
                                         ui.text_edit_singleline(&mut self.config.tester.speed_test_url);
