@@ -44,7 +44,7 @@ impl AppState {
             logs: vec![LogMessage {
                 time: Local::now().format("%H:%M:%S").to_string(),
                 level: LogLevel::Info,
-                text: "🖥️ System Boot: Smart Modular Engine Initialized (Phase 4).".to_string(),
+                text: "🖥️ System Boot: Smart Modular Engine Initialized (Phase 5).".to_string(),
             }],
             total_configs: 0,
             by_protocol: BTreeMap::new(),
@@ -257,7 +257,7 @@ impl eframe::App for AppState {
                                 .color(egui::Color32::from_rgb(240, 248, 255)),
                         );
                         ui.label(
-                            egui::RichText::new("Modular Smart Engine - Phase 4")
+                            egui::RichText::new("Modular Smart Engine - Phase 5")
                                 .size(13.0)
                                 .color(egui::Color32::from_rgb(120, 140, 160)),
                         );
@@ -339,6 +339,7 @@ impl eframe::App for AppState {
                     ui.selectable_value(&mut self.active_tab, 1, "📡 Targets");
                     ui.selectable_value(&mut self.active_tab, 2, "🎯 Filters");
                     ui.selectable_value(&mut self.active_tab, 3, "🔬 Tester");
+                    ui.selectable_value(&mut self.active_tab, 4, "📤 Publisher");
                 });
                 ui.separator();
                 egui::ScrollArea::vertical().show(ui, |ui| {
@@ -672,6 +673,40 @@ For speed test on Telegram links, keep bytes-query disabled.").small().color(egu
                                 }
                             }
                         }
+
+                        4 => {
+                            ui.heading(egui::RichText::new("📤 Phase 5 - Telegram Publisher").color(egui::Color32::LIGHT_BLUE));
+                            ui.label(egui::RichText::new("Sends output/tested/new_only/mixed.txt to your Telegram channel/group via bot API using app proxy settings.").small().color(egui::Color32::GRAY));
+                            ui.add_space(8.0);
+
+                            ui.checkbox(&mut self.config.phase5_telegram.enabled, "Enable Phase 5 Telegram Publish");
+                            ui.horizontal(|ui| {
+                                ui.label("Bot Token:");
+                                ui.text_edit_singleline(&mut self.config.phase5_telegram.bot_token);
+                            });
+                            ui.horizontal(|ui| {
+                                ui.label("Chat ID (@channel or -100...):");
+                                ui.text_edit_singleline(&mut self.config.phase5_telegram.chat_id);
+                            });
+                            ui.horizontal(|ui| {
+                                ui.label("Configs per post:");
+                                ui.add(egui::DragValue::new(&mut self.config.phase5_telegram.post_config_count).range(1..=200));
+                            });
+
+                            ui.separator();
+                            ui.checkbox(&mut self.config.phase5_telegram.header_enabled, "Enable custom first line");
+                            ui.add_enabled_ui(self.config.phase5_telegram.header_enabled, |ui| {
+                                ui.text_edit_singleline(&mut self.config.phase5_telegram.header_text);
+                            });
+
+                            ui.checkbox(&mut self.config.phase5_telegram.footer_enabled, "Enable custom last line");
+                            ui.add_enabled_ui(self.config.phase5_telegram.footer_enabled, |ui| {
+                                ui.text_edit_singleline(&mut self.config.phase5_telegram.footer_text);
+                            });
+
+                            ui.add_space(6.0);
+                            ui.label(egui::RichText::new("Tip: Configs are posted inside <pre> block so each line is one config and easy one-tap copy.").small().color(egui::Color32::from_rgb(160, 210, 255)));
+                        }
                         _ => {}
                     }
                 });
@@ -733,12 +768,22 @@ For speed test on Telegram links, keep bytes-query disabled.").small().color(egu
                             .show(ui, |ui| {
                                 ui.spacing_mut().item_spacing.y = 5.0;
                                 for log in self.logs.iter().rev().take(500).rev() {
-                                    let color = match log.level {
+                                    let base_color = match log.level {
                                         LogLevel::Debug => egui::Color32::from_rgb(100, 110, 130),
                                         LogLevel::Info => egui::Color32::from_rgb(120, 200, 255),
                                         LogLevel::Success => egui::Color32::from_rgb(80, 240, 150),
                                         LogLevel::Warning => egui::Color32::from_rgb(250, 190, 70),
                                         LogLevel::Error => egui::Color32::from_rgb(255, 90, 90),
+                                    };
+                                    let text_lower = log.text.to_ascii_lowercase();
+                                    let color = if text_lower.contains("passed=")
+                                        || text_lower.contains("final_passed")
+                                        || text_lower.contains("sent_configs=")
+                                        || text_lower.contains("post ")
+                                    {
+                                        egui::Color32::from_rgb(255, 220, 90)
+                                    } else {
+                                        base_color
                                     };
                                     ui.horizontal_wrapped(|ui| {
                                         ui.label(
