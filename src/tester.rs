@@ -138,23 +138,59 @@ fn parse_csv_results(path: &str) -> Vec<TestResult> {
         return Vec::new();
     };
 
-    let headers: Vec<String> = header_line
-        .split(',')
+    let headers: Vec<String> = split_csv_line_auto(header_line)
+        .into_iter()
         .map(|h| h.trim().trim_matches('"').to_lowercase())
         .collect();
 
     let link_idx = headers
         .iter()
-        .position(|h| h == "link" || h == "config")
+        .position(|h| {
+            h == "link"
+                || h == "config"
+                || h == "proxy"
+                || h == "outbound"
+                || h == "url"
+                || h.contains("link")
+                || h.contains("config")
+        })
         .unwrap_or(0);
     let delay_idx = headers
         .iter()
-        .position(|h| h == "delay")
+        .position(|h| {
+            h == "delay"
+                || h.contains("delay")
+                || h.contains("latency")
+                || h.contains("ping")
+                || h.contains("rtt")
+        })
         .unwrap_or(usize::MAX);
-    let download_idx = headers
+
+    let mut download_indices: Vec<usize> = headers
         .iter()
-        .position(|h| h == "download")
-        .unwrap_or(usize::MAX);
+        .enumerate()
+        .filter_map(|(idx, h)| {
+            let header = h.as_str();
+            let looks_like_download = header == "download"
+                || header == "dl"
+                || header.contains("download")
+                || header.contains("bandwidth")
+                || header.contains("throughput")
+                || header.contains("rate")
+                || (header.contains("speed") && !header.contains("speedtest"));
+            if looks_like_download {
+                Some(idx)
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    if download_indices.is_empty() {
+        if let Some(idx) = headers.iter().position(|h| h == "speed") {
+            download_indices.push(idx);
+        }
+    }
     let location_idx = headers
         .iter()
         .position(|h| h == "location" || h == "cc")
@@ -162,7 +198,7 @@ fn parse_csv_results(path: &str) -> Vec<TestResult> {
 
     let mut out = Vec::new();
     for line in lines {
-        let cols: Vec<&str> = line.split(',').collect();
+        let cols = split_csv_line_with_delimiter(line, detect_csv_delimiter(header_line));
         if link_idx >= cols.len() {
             continue;
         }
@@ -173,26 +209,19 @@ fn parse_csv_results(path: &str) -> Vec<TestResult> {
         }
 
         let delay_ms = if delay_idx < cols.len() {
-            cols[delay_idx]
-                .trim()
-                .trim_matches('"')
-                .parse::<u128>()
-                .ok()
+            parse_numeric_to_kb(cols[delay_idx].trim().trim_matches('"'), false)
+                .map(|v| v as u128)
                 .filter(|v| *v > 0)
         } else {
             None
         };
 
-        let download_kb = if download_idx < cols.len() {
-            cols[download_idx]
-                .trim()
-                .trim_matches('"')
-                .parse::<f64>()
-                .ok()
-                .filter(|v| *v > 0.0)
-        } else {
-            None
-        };
+        let download_kb = download_indices
+            .iter()
+            .filter_map(|idx| cols.get(*idx))
+            .filter_map(|v| parse_numeric_to_kb(v.trim().trim_matches('"'), true))
+            .filter(|v| *v > 0.0)
+            .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
         let country = if location_idx < cols.len() {
             let value = cols[location_idx].trim().trim_matches('"');
@@ -214,6 +243,84 @@ fn parse_csv_results(path: &str) -> Vec<TestResult> {
     }
 
     out
+}
+
+fn detect_csv_delimiter(line: &str) -> char {
+    let commas = line.matches(',').count();
+    let semis = line.matches(';').count();
+    if semis > commas {
+        ';'
+    } else {
+        ','
+    }
+}
+
+fn split_csv_line_auto(line: &str) -> Vec<String> {
+    split_csv_line_with_delimiter(line, detect_csv_delimiter(line))
+}
+
+fn split_csv_line_with_delimiter(line: &str, delimiter: char) -> Vec<String> {
+    let mut cols = Vec::new();
+    let mut current = String::new();
+    let mut in_quotes = false;
+    let mut chars = line.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        match ch {
+            '"' => {
+                if in_quotes && chars.peek() == Some(&'"') {
+                    current.push('"');
+                    let _ = chars.next();
+                } else {
+                    in_quotes = !in_quotes;
+                }
+            }
+            _ if ch == delimiter && !in_quotes => {
+                cols.push(current.clone());
+                current.clear();
+            }
+            _ => current.push(ch),
+        }
+    }
+    cols.push(current);
+    cols
+}
+
+fn parse_numeric_to_kb(raw: &str, is_speed: bool) -> Option<f64> {
+    let lower = raw.trim().to_ascii_lowercase();
+    if lower.is_empty() {
+        return None;
+    }
+
+    let cleaned = lower.replace(',', "");
+    let numeric: String = cleaned
+        .chars()
+        .filter(|c| c.is_ascii_digit() || *c == '.')
+        .collect();
+    let mut value = numeric.parse::<f64>().ok()?;
+
+    if !is_speed {
+        return Some(value);
+    }
+
+    if cleaned.contains("gib/s") || cleaned.contains("gb/s") || cleaned.ends_with("gb") {
+        value *= 1024.0 * 1024.0;
+    } else if cleaned.contains("mib/s") || cleaned.contains("mb/s") || cleaned.ends_with("mb") {
+        value *= 1024.0;
+    } else if cleaned.contains("kib/s") || cleaned.contains("kb/s") || cleaned.ends_with("kb") {
+    } else if cleaned.contains("gbps") {
+        value *= 125_000.0;
+    } else if cleaned.contains("mbps") {
+        value *= 125.0;
+    } else if cleaned.contains("kbps") {
+        value /= 8.0;
+    } else if cleaned.contains("bps") || cleaned.contains("b/s") || cleaned.ends_with('b') {
+        value /= 1024.0;
+    } else if value > 5000.0 {
+        value /= 1024.0;
+    }
+
+    Some(value)
 }
 
 pub fn filter_working_configs(
@@ -308,7 +415,10 @@ pub fn filter_working_configs(
         log_worker(
             &tx,
             LogLevel::Info,
-            format!("📍 Phase2/PING start -> {}", tester_cfg.ping_test_url),
+            format!(
+                "📍 Phase2/PING start -> {} | candidates={} | timeout={}s",
+                tester_cfg.ping_test_url, total, tester_cfg.timeout_secs
+            ),
         );
         if !run_xray_knife(tester_cfg, &args) {
             log_worker(
@@ -322,8 +432,32 @@ pub fn filter_working_configs(
         }
 
         ping_selected = parse_csv_results(&ping_csv);
-        ping_selected.retain(|r| r.delay_ms.is_some());
-        ping_selected.sort_by_key(|r| r.delay_ms.unwrap_or(u128::MAX));
+        let parsed_rows = ping_selected.len();
+        let with_delay = ping_selected
+            .iter()
+            .filter(|r| r.delay_ms.is_some())
+            .count();
+
+        log_worker(
+            &tx,
+            LogLevel::Info,
+            format!(
+                "🧾 Phase2/PING csv rows={} | with_delay_metric={}",
+                parsed_rows, with_delay
+            ),
+        );
+
+        if with_delay > 0 {
+            ping_selected.retain(|r| r.delay_ms.is_some());
+            ping_selected.sort_by_key(|r| r.delay_ms.unwrap_or(u128::MAX));
+        } else {
+            log_worker(
+                &tx,
+                LogLevel::Warning,
+                "⚠️ Phase2/PING csv had no explicit delay metric. Falling back to accept parsed rows as ping-pass candidates.".to_string(),
+            );
+        }
+
         phase2.ping_passed_mixed = ping_selected.iter().map(|r| r.link.clone()).collect();
         let _ = fs::remove_file(&ping_csv);
 
@@ -331,8 +465,9 @@ pub fn filter_working_configs(
             &tx,
             LogLevel::Success,
             format!(
-                "✅ Phase2/PING done | passed={} | elapsed={}ms",
+                "✅ Phase2/PING done | passed={} | removed={} | elapsed={}ms",
                 phase2.ping_passed_mixed.len(),
+                total.saturating_sub(phase2.ping_passed_mixed.len()),
                 ping_started.elapsed().as_millis()
             ),
         );
@@ -391,6 +526,20 @@ pub fn filter_working_configs(
             .min(speed_targets.len());
         speed_targets.truncate(top_n);
 
+        log_worker(
+            &tx,
+            LogLevel::Info,
+            format!(
+                "📦 Phase2/SPEED targets={} | source={} | remaining_after_speed=depends_on_results",
+                speed_targets.len(),
+                if tester_cfg.speed_test_from_ping_passed_only && tester_cfg.ping_test_enabled {
+                    "ping-passed"
+                } else {
+                    "all-phase1"
+                }
+            ),
+        );
+
         if fs::write(&speed_input, speed_targets.join("\n")).is_err() {
             let _ = fs::remove_file(&input_path);
             log_worker(
@@ -448,14 +597,28 @@ pub fn filter_working_configs(
         );
         if run_xray_knife(tester_cfg, &args) {
             let mut speed_results = parse_csv_results(&speed_csv);
+            let parsed_with_speed = speed_results
+                .iter()
+                .filter(|item| item.download_kb.unwrap_or(0.0) > 0.0)
+                .count();
+            log_worker(
+                &tx,
+                LogLevel::Info,
+                format!(
+                    "🧾 Phase2/SPEED csv rows={} | with_download_metric={}",
+                    speed_results.len(),
+                    parsed_with_speed
+                ),
+            );
             speed_results.retain(|item| item.download_kb.unwrap_or(0.0) > 0.0);
             phase2.speed_passed_mixed = speed_results.iter().map(|r| r.link.clone()).collect();
             if speed_results.is_empty() {
                 log_worker(
                     &tx,
                     LogLevel::Warning,
-                    "⚠️ Speed test returned 0 healthy configs. Keeping previous stage results for final output.".to_string(),
+                    "⚠️ Speed test returned 0 healthy configs. No config will pass speed stage in this cycle.".to_string(),
                 );
+                final_selected.clear();
             } else {
                 final_selected = speed_results;
             }
@@ -463,17 +626,21 @@ pub fn filter_working_configs(
             log_worker(
                 &tx,
                 LogLevel::Warning,
-                "⚠️ Speed test failed to execute. Keeping previous stage results.".to_string(),
+                "⚠️ Speed test failed to execute. Speed stage marked as failed; no config will pass this stage.".to_string(),
             );
-            phase2.speed_passed_mixed = final_selected.iter().map(|r| r.link.clone()).collect();
+            final_selected.clear();
+            phase2.speed_passed_mixed.clear();
         }
 
         log_worker(
             &tx,
             LogLevel::Success,
             format!(
-                "✅ Phase2/SPEED done | passed={} | elapsed={}ms",
+                "✅ Phase2/SPEED done | passed={} | removed={} | elapsed={}ms",
                 phase2.speed_passed_mixed.len(),
+                speed_targets
+                    .len()
+                    .saturating_sub(phase2.speed_passed_mixed.len()),
                 speed_started.elapsed().as_millis()
             ),
         );
@@ -485,6 +652,14 @@ pub fn filter_working_configs(
     }
 
     let _ = fs::remove_file(&input_path);
+
+    if final_selected.is_empty() {
+        log_worker(
+            &tx,
+            LogLevel::Warning,
+            "⚠️ PHASE 2 produced 0 final configs after active tests.".to_string(),
+        );
+    }
 
     for (proto, links) in configs_map.iter_mut() {
         if !NON_MIXED_PROTOCOLS.contains(&proto.as_str()) {
