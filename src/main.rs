@@ -12,6 +12,7 @@ use crate::ui::AppState;
 
 fn main() -> eframe::Result<()> {
     // تنظیمات پنجره اصلی نرم‌افزار
+    // ابعاد استاندارد برای نمایش تمامی تب‌ها و لاگ‌ها
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1100.0, 750.0])
@@ -20,6 +21,7 @@ fn main() -> eframe::Result<()> {
     };
 
     // راه‌اندازی رابط کاربری گرافیکی و اجرای برنامه
+    // فراخوانی AppState::bootstrap() برای شروع کار
     eframe::run_native(
         "Telegram Config Collector Phase 2",
         options,
