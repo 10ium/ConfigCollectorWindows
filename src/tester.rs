@@ -149,18 +149,34 @@ fn parse_csv_results(path: &str) -> Vec<TestResult> {
         .unwrap_or(0);
     let delay_idx = headers
         .iter()
-        .position(|h| h == "delay")
+        .position(|h| h == "delay" || h.contains("delay") || h.contains("latency"))
         .unwrap_or(usize::MAX);
-    let download_idx = headers
+
+    let mut download_indices: Vec<usize> = headers
         .iter()
-        .position(|h| {
-            h == "download"
-                || h == "speed"
-                || h == "dl"
-                || h.contains("download")
-                || h.contains("speed")
+        .enumerate()
+        .filter_map(|(idx, h)| {
+            let header = h.as_str();
+            let looks_like_download = header == "download"
+                || header == "dl"
+                || header.contains("download")
+                || header.contains("bandwidth")
+                || header.contains("throughput")
+                || header.contains("rate")
+                || (header.contains("speed") && !header.contains("speedtest"));
+            if looks_like_download {
+                Some(idx)
+            } else {
+                None
+            }
         })
-        .unwrap_or(usize::MAX);
+        .collect();
+
+    if download_indices.is_empty() {
+        if let Some(idx) = headers.iter().position(|h| h == "speed") {
+            download_indices.push(idx);
+        }
+    }
     let location_idx = headers
         .iter()
         .position(|h| h == "location" || h == "cc")
@@ -186,12 +202,12 @@ fn parse_csv_results(path: &str) -> Vec<TestResult> {
             None
         };
 
-        let download_kb = if download_idx < cols.len() {
-            parse_numeric_to_kb(cols[download_idx].trim().trim_matches('"'), true)
-                .filter(|v| *v > 0.0)
-        } else {
-            None
-        };
+        let download_kb = download_indices
+            .iter()
+            .filter_map(|idx| cols.get(*idx))
+            .filter_map(|v| parse_numeric_to_kb(v.trim().trim_matches('"'), true))
+            .filter(|v| *v > 0.0)
+            .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
         let country = if location_idx < cols.len() {
             let value = cols[location_idx].trim().trim_matches('"');
@@ -219,10 +235,18 @@ fn split_csv_line(line: &str) -> Vec<String> {
     let mut cols = Vec::new();
     let mut current = String::new();
     let mut in_quotes = false;
+    let mut chars = line.chars().peekable();
 
-    for ch in line.chars() {
+    while let Some(ch) = chars.next() {
         match ch {
-            '"' => in_quotes = !in_quotes,
+            '"' => {
+                if in_quotes && chars.peek() == Some(&'"') {
+                    current.push('"');
+                    let _ = chars.next();
+                } else {
+                    in_quotes = !in_quotes;
+                }
+            }
             ',' if !in_quotes => {
                 cols.push(current.clone());
                 current.clear();
@@ -251,16 +275,20 @@ fn parse_numeric_to_kb(raw: &str, is_speed: bool) -> Option<f64> {
         return Some(value);
     }
 
-    if cleaned.contains("mb/s") || cleaned.ends_with("mb") {
-        value *= 1024.0;
-    } else if cleaned.contains("kb/s") || cleaned.ends_with("kb") {
-    } else if cleaned.contains("gb/s") || cleaned.ends_with("gb") {
+    if cleaned.contains("gib/s") || cleaned.contains("gb/s") || cleaned.ends_with("gb") {
         value *= 1024.0 * 1024.0;
+    } else if cleaned.contains("mib/s") || cleaned.contains("mb/s") || cleaned.ends_with("mb") {
+        value *= 1024.0;
+    } else if cleaned.contains("kib/s") || cleaned.contains("kb/s") || cleaned.ends_with("kb") {
+    } else if cleaned.contains("gbps") {
+        value *= 125_000.0;
     } else if cleaned.contains("mbps") {
         value *= 125.0;
     } else if cleaned.contains("kbps") {
         value /= 8.0;
-    } else if cleaned.contains("b/s") || cleaned.ends_with('b') || value > 5000.0 {
+    } else if cleaned.contains("bps") || cleaned.contains("b/s") || cleaned.ends_with('b') {
+        value /= 1024.0;
+    } else if value > 5000.0 {
         value /= 1024.0;
     }
 
@@ -517,6 +545,19 @@ pub fn filter_working_configs(
         );
         if run_xray_knife(tester_cfg, &args) {
             let mut speed_results = parse_csv_results(&speed_csv);
+            let parsed_with_speed = speed_results
+                .iter()
+                .filter(|item| item.download_kb.unwrap_or(0.0) > 0.0)
+                .count();
+            log_worker(
+                &tx,
+                LogLevel::Info,
+                format!(
+                    "🧾 Phase2/SPEED csv rows={} | with_download_metric={}",
+                    speed_results.len(),
+                    parsed_with_speed
+                ),
+            );
             speed_results.retain(|item| item.download_kb.unwrap_or(0.0) > 0.0);
             phase2.speed_passed_mixed = speed_results.iter().map(|r| r.link.clone()).collect();
             if speed_results.is_empty() {
