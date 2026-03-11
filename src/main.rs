@@ -1,6 +1,7 @@
 #![windows_subsystem = "windows"]
 
 pub mod config;
+pub mod converter;
 pub mod scraper;
 pub mod storage;
 pub mod tester;
