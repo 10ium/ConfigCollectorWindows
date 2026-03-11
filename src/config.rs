@@ -149,6 +149,34 @@ pub struct ClashConverterConfig {
     pub protocol_rules: BTreeMap<String, ClashProtocolRule>,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Phase5TelegramConfig {
+    pub enabled: bool,
+    pub bot_token: String,
+    pub chat_id: String,
+    pub post_config_count: usize,
+    pub header_enabled: bool,
+    pub header_text: String,
+    pub footer_enabled: bool,
+    pub footer_text: String,
+}
+
+impl Default for Phase5TelegramConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            bot_token: "".to_string(),
+            chat_id: "".to_string(),
+            post_config_count: 10,
+            header_enabled: false,
+            header_text: "".to_string(),
+            footer_enabled: false,
+            footer_text: "".to_string(),
+        }
+    }
+}
+
 impl Default for ClashConverterConfig {
     fn default() -> Self {
         let mut protocol_rules = BTreeMap::new();
@@ -202,6 +230,7 @@ pub struct AppConfig {
     pub protocol_rules: BTreeMap<String, ProtocolRule>,
     pub tester: TesterConfig,
     pub clash_converter: ClashConverterConfig,
+    pub phase5_telegram: Phase5TelegramConfig,
 }
 
 impl Default for AppConfig {
@@ -236,6 +265,7 @@ impl Default for AppConfig {
             protocol_rules,
             tester: TesterConfig::default(),
             clash_converter: ClashConverterConfig::default(),
+            phase5_telegram: Phase5TelegramConfig::default(),
         }
     }
 }

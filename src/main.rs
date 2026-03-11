@@ -3,6 +3,7 @@
 pub mod config;
 pub mod converter;
 pub mod scraper;
+pub mod sender;
 pub mod storage;
 pub mod tester;
 pub mod ui;
