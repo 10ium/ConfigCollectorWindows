@@ -2,6 +2,7 @@ use crate::config::Phase5TelegramConfig;
 use crate::scraper::{build_client, log_worker, AppEvent, LogLevel};
 use anyhow::{anyhow, Result};
 use reqwest::blocking::Client;
+use serde_json::Value;
 use std::fs;
 use std::path::Path;
 use std::sync::mpsc::Sender;
@@ -20,6 +21,54 @@ fn chunk_lines(lines: &[String], chunk_size: usize) -> Vec<Vec<String>> {
         .collect::<Vec<Vec<String>>>()
 }
 
+fn telegram_get(
+    client: &Client,
+    bot_token: &str,
+    method: &str,
+    params: &[(&str, String)],
+) -> Result<Value> {
+    let api_url = format!(
+        "https://api.telegram.org/bot{}/{}",
+        bot_token.trim(),
+        method
+    );
+    let resp = client.get(&api_url).query(params).send()?;
+    let status = resp.status();
+    let body = resp.text().unwrap_or_default();
+    if !status.is_success() {
+        return Err(anyhow!("telegram {} failed: {} {}", method, status, body));
+    }
+    serde_json::from_str::<Value>(&body).map_err(|e| {
+        anyhow!(
+            "invalid telegram {} response: {} | body={}",
+            method,
+            e,
+            body
+        )
+    })
+}
+
+fn validate_telegram_target(client: &Client, cfg: &Phase5TelegramConfig) -> Result<()> {
+    let me = telegram_get(client, &cfg.bot_token, "getMe", &[])?;
+    if !me.get("ok").and_then(|v| v.as_bool()).unwrap_or(false) {
+        return Err(anyhow!(
+            "telegram bot token appears invalid (getMe returned ok=false)"
+        ));
+    }
+
+    let chat = telegram_get(
+        client,
+        &cfg.bot_token,
+        "getChat",
+        &[("chat_id", cfg.chat_id.trim().to_string())],
+    )?;
+    if !chat.get("ok").and_then(|v| v.as_bool()).unwrap_or(false) {
+        return Err(anyhow!("telegram getChat returned ok=false. Ensure bot is added to chat/channel and chat_id is correct"));
+    }
+
+    Ok(())
+}
+
 fn post_message(client: &Client, cfg: &Phase5TelegramConfig, text: &str) -> Result<()> {
     let api_url = format!(
         "https://api.telegram.org/bot{}/sendMessage",
@@ -36,7 +85,7 @@ fn post_message(client: &Client, cfg: &Phase5TelegramConfig, text: &str) -> Resu
     if !resp.status().is_success() {
         let status = resp.status();
         let body = resp.text().unwrap_or_default();
-        return Err(anyhow!("telegram sendMessage failed: {} {}", status, body));
+        return Err(anyhow!("telegram sendMessage failed: {} {}. Hint: bot must be member/admin in target chat and chat_id must be correct (@channelusername for public channels or -100... for private channels).", status, body));
     }
     Ok(())
 }
@@ -90,6 +139,7 @@ pub fn send_tested_new_only_to_telegram(
     }
 
     let client = build_client(app_cfg)?;
+    validate_telegram_target(&client, cfg)?;
     let chunks = chunk_lines(&configs, cfg.post_config_count.max(1));
 
     log_worker(
