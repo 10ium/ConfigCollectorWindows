@@ -147,7 +147,7 @@ fn rename_config(
                 }
             }
         }
-        return link.to_string(); // در صورت خطای پارس، لینک اصلی بازگردانده می‌شود
+        return link.to_string();
     }
 
     // پردازش سایر پروتکل‌ها (VLESS, Trojan, SS و ...)
@@ -159,6 +159,33 @@ fn rename_config(
     let new_remark = format!("{}{}", tag_with_sep, decoded_old);
     
     format!("{}#{}", base, percent_encode(&new_remark))
+}
+
+/// پاکسازی لاگ‌ها از کدهای رنگی ANSI و مخفی کردن پروگرس‌بارهای نامرتب
+fn clean_log_line(s: &str) -> Option<String> {
+    let mut cleaned = String::with_capacity(s.len());
+    let mut in_escape = false;
+    for c in s.chars() {
+        if c == '\x1B' {
+            in_escape = true;
+        } else if in_escape {
+            if c.is_ascii_alphabetic() {
+                in_escape = false;
+            }
+        } else if c != '\r' && c != '\u{FEFF}' {
+            cleaned.push(c);
+        }
+    }
+    
+    let trimmed = cleaned.trim();
+    if trimmed.is_empty() 
+        || trimmed.contains("Testing configs") 
+        || trimmed.starts_with('%')
+        || trimmed.contains("it/s") 
+        || trimmed.contains("it/hr") {
+        return None;
+    }
+    Some(trimmed.to_string())
 }
 
 /// اجرای موتور xray-knife با قابلیت پایپ کردن زنده لاگ‌ها به رابط کاربری نرم افزار
@@ -182,41 +209,36 @@ fn run_xray_knife(tester_cfg: &TesterConfig, args: &[String], tx: &Sender<AppEve
 
     match command.spawn() {
         Ok(mut child) => {
-            // شنود زنده خروجی استاندارد (Stdout) در یک Thread مجزا
             if let Some(stdout) = child.stdout.take() {
                 let tx_clone = tx.clone();
                 thread::spawn(move || {
                     let reader = BufReader::new(stdout);
                     for line in reader.lines().filter_map(Result::ok) {
-                        let cleaned = line.trim().replace('\u{FEFF}', "");
-                        if !cleaned.is_empty() {
+                        if let Some(clean_str) = clean_log_line(&line) {
                             let _ = tx_clone.send(AppEvent::Log(
                                 LogLevel::Debug,
-                                format!("🔪 {}", cleaned),
+                                format!("🔹 {}", clean_str),
                             ));
                         }
                     }
                 });
             }
 
-            // شنود زنده خطاهای هسته (Stderr)
             if let Some(stderr) = child.stderr.take() {
                 let tx_clone = tx.clone();
                 thread::spawn(move || {
                     let reader = BufReader::new(stderr);
                     for line in reader.lines().filter_map(Result::ok) {
-                        let cleaned = line.trim().replace('\u{FEFF}', "");
-                        if !cleaned.is_empty() {
+                        if let Some(clean_str) = clean_log_line(&line) {
                             let _ = tx_clone.send(AppEvent::Log(
-                                LogLevel::Warning,
-                                format!("🔪 {}", cleaned),
+                                LogLevel::Debug,
+                                format!("🔹 {}", clean_str),
                             ));
                         }
                     }
                 });
             }
 
-            // مسدود شدن تا پایان کار هسته xray-knife
             child.wait().map(|s| s.success()).unwrap_or(false)
         }
         Err(e) => {
@@ -249,9 +271,61 @@ fn build_temp_path(file_name: &str) -> String {
         .to_string()
 }
 
+/// پارسر هوشمند و ایمن برای خواندن مقدار پینگ (فیلتر کننده متن‌های خطا)
+fn parse_delay(raw: &str) -> Option<u128> {
+    let s = raw.trim().to_lowercase();
+    if s.is_empty() || s == "0" || s == "-1" || s.contains("error") || s.contains("timeout") || s.contains("fail") || s.contains("exceeded") {
+        return None;
+    }
+    
+    let just_numbers: String = s.chars().filter(|c| c.is_ascii_digit()).collect();
+    if just_numbers.is_empty() { 
+        return None; 
+    }
+    
+    // اگر طول رشته خیلی بیشتر از طول اعداد باشد، به احتمال زیاد پیام خطاست (مثل: context deadline exceeded 5000ms)
+    if s.len() > just_numbers.len() + 5 {
+        return None;
+    }
+    
+    let val = just_numbers.parse::<u128>().ok()?;
+    if val > 0 && val < 30000 { Some(val) } else { None }
+}
+
+/// پارسر هوشمند برای تست سرعت
+fn parse_speed(raw: &str) -> Option<f64> {
+    let s = raw.trim().to_lowercase();
+    if s.is_empty() || s == "0" || s == "-1" || s.contains("error") || s.contains("timeout") || s.contains("fail") {
+        return None;
+    }
+    
+    let cleaned = s.replace(',', "");
+    let numeric: String = cleaned.chars().filter(|c| c.is_ascii_digit() || *c == '.').collect();
+    if numeric.is_empty() { return None; }
+    
+    if cleaned.len() > numeric.len() + 10 {
+        return None;
+    }
+    
+    let mut value = numeric.parse::<f64>().ok()?;
+    
+    if cleaned.contains("gib") || cleaned.contains("gb") {
+        value *= 1024.0 * 1024.0;
+    } else if cleaned.contains("mib") || cleaned.contains("mb") {
+        value *= 1024.0;
+    } else if cleaned.contains("kib") || cleaned.contains("kb") {
+        value *= 1.0;
+    } else if cleaned.contains("bps") || cleaned.contains("b/s") || cleaned.ends_with('b') {
+        value /= 1024.0;
+    } else if value > 5000.0 {
+        value /= 1024.0;
+    }
+    
+    if value > 0.0 { Some(value) } else { None }
+}
+
 fn parse_csv_results(path: &str) -> Vec<TestResult> {
     let raw_content = fs::read_to_string(path).unwrap_or_default();
-    // حدف کاراکتر BOM در صورت وجود
     let raw = raw_content.strip_prefix('\u{FEFF}').unwrap_or(&raw_content);
 
     let mut lines = raw.lines();
@@ -267,24 +341,14 @@ fn parse_csv_results(path: &str) -> Vec<TestResult> {
     let link_idx = headers
         .iter()
         .position(|h| {
-            h == "link"
-                || h == "config"
-                || h == "proxy"
-                || h == "outbound"
-                || h == "url"
-                || h.contains("link")
-                || h.contains("config")
+            h == "link" || h == "config" || h == "proxy" || h == "outbound" || h == "url" || h.contains("link") || h.contains("config")
         })
         .unwrap_or(0);
         
     let delay_idx = headers
         .iter()
         .position(|h| {
-            h == "delay"
-                || h.contains("delay")
-                || h.contains("latency")
-                || h.contains("ping")
-                || h.contains("rtt")
+            h == "delay" || h.contains("delay") || h.contains("latency") || h.contains("ping") || h.contains("rtt")
         })
         .unwrap_or(usize::MAX);
 
@@ -293,18 +357,8 @@ fn parse_csv_results(path: &str) -> Vec<TestResult> {
         .enumerate()
         .filter_map(|(idx, h)| {
             let header = h.as_str();
-            let looks_like_download = header == "download"
-                || header == "dl"
-                || header.contains("download")
-                || header.contains("bandwidth")
-                || header.contains("throughput")
-                || header.contains("rate")
-                || (header.contains("speed") && !header.contains("speedtest"));
-            if looks_like_download {
-                Some(idx)
-            } else {
-                None
-            }
+            let looks_like_download = header == "download" || header == "dl" || header.contains("download") || header.contains("bandwidth") || header.contains("throughput") || header.contains("rate") || (header.contains("speed") && !header.contains("speedtest"));
+            if looks_like_download { Some(idx) } else { None }
         })
         .collect();
 
@@ -332,9 +386,7 @@ fn parse_csv_results(path: &str) -> Vec<TestResult> {
         }
 
         let delay_ms = if delay_idx < cols.len() {
-            parse_numeric_to_kb(cols[delay_idx].trim().trim_matches('"'), false)
-                .map(|v| v as u128)
-                .filter(|v| *v > 0)
+            parse_delay(cols[delay_idx].trim().trim_matches('"'))
         } else {
             None
         };
@@ -342,17 +394,12 @@ fn parse_csv_results(path: &str) -> Vec<TestResult> {
         let download_kb = download_indices
             .iter()
             .filter_map(|idx| cols.get(*idx))
-            .filter_map(|v| parse_numeric_to_kb(v.trim().trim_matches('"'), true))
-            .filter(|v| *v > 0.0)
+            .filter_map(|v| parse_speed(v.trim().trim_matches('"')))
             .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
         let country = if location_idx < cols.len() {
             let value = cols[location_idx].trim().trim_matches('"');
-            if value.is_empty() {
-                None
-            } else {
-                Some(value.to_string())
-            }
+            if value.is_empty() { None } else { Some(value.to_string()) }
         } else {
             None
         };
@@ -371,11 +418,7 @@ fn parse_csv_results(path: &str) -> Vec<TestResult> {
 fn detect_csv_delimiter(line: &str) -> char {
     let commas = line.matches(',').count();
     let semis = line.matches(';').count();
-    if semis > commas {
-        ';'
-    } else {
-        ','
-    }
+    if semis > commas { ';' } else { ',' }
 }
 
 fn split_csv_line_auto(line: &str) -> Vec<String> {
@@ -407,43 +450,6 @@ fn split_csv_line_with_delimiter(line: &str, delimiter: char) -> Vec<String> {
     }
     cols.push(current);
     cols
-}
-
-fn parse_numeric_to_kb(raw: &str, is_speed: bool) -> Option<f64> {
-    let lower = raw.trim().to_ascii_lowercase();
-    if lower.is_empty() {
-        return None;
-    }
-
-    let cleaned = lower.replace(',', "");
-    let numeric: String = cleaned
-        .chars()
-        .filter(|c| c.is_ascii_digit() || *c == '.')
-        .collect();
-    let mut value = numeric.parse::<f64>().ok()?;
-
-    if !is_speed {
-        return Some(value);
-    }
-
-    if cleaned.contains("gib/s") || cleaned.contains("gb/s") || cleaned.ends_with("gb") {
-        value *= 1024.0 * 1024.0;
-    } else if cleaned.contains("mib/s") || cleaned.contains("mb/s") || cleaned.ends_with("mb") {
-        value *= 1024.0;
-    } else if cleaned.contains("kib/s") || cleaned.contains("kb/s") || cleaned.ends_with("kb") {
-    } else if cleaned.contains("gbps") {
-        value *= 125_000.0;
-    } else if cleaned.contains("mbps") {
-        value *= 125.0;
-    } else if cleaned.contains("kbps") {
-        value /= 8.0;
-    } else if cleaned.contains("bps") || cleaned.contains("b/s") || cleaned.ends_with('b') {
-        value /= 1024.0;
-    } else if value > 5000.0 {
-        value /= 1024.0;
-    }
-
-    Some(value)
 }
 
 pub fn filter_working_configs(
@@ -544,46 +550,24 @@ pub fn filter_working_configs(
             ),
         );
         
-        // فراخوانی ابزار همراه با فرستادن tx برای نمایش زنده لاگ‌ها
         if !run_xray_knife(tester_cfg, &args, &tx) {
-            log_worker(
-                &tx,
-                LogLevel::Error,
-                "❌ Ping test failed to execute.".to_string(),
-            );
+            log_worker(&tx, LogLevel::Error, "❌ Ping test failed to execute.".to_string());
             let _ = fs::remove_file(&input_path);
             let _ = fs::remove_file(&ping_csv);
             return phase2;
         }
 
-        ping_selected = parse_csv_results(&ping_csv);
-        let parsed_rows = ping_selected.len();
-        let with_delay = ping_selected
-            .iter()
-            .filter(|r| r.delay_ms.is_some())
-            .count();
+        let mut all_ping_results = parse_csv_results(&ping_csv);
+        all_ping_results.retain(|r| r.delay_ms.is_some());
+        all_ping_results.sort_by_key(|r| r.delay_ms.unwrap_or(u128::MAX));
+        
+        ping_selected = all_ping_results;
 
-        log_worker(
-            &tx,
-            LogLevel::Info,
-            format!(
-                "🧾 Phase2/PING csv rows={} | with_delay_metric={}",
-                parsed_rows, with_delay
-            ),
-        );
-
-        if with_delay > 0 {
-            ping_selected.retain(|r| r.delay_ms.is_some());
-            ping_selected.sort_by_key(|r| r.delay_ms.unwrap_or(u128::MAX));
-        } else {
-            log_worker(
-                &tx,
-                LogLevel::Warning,
-                "⚠️ Phase2/PING csv had no explicit delay metric. Falling back to accept parsed rows as ping-pass candidates.".to_string(),
-            );
-        }
-
-        phase2.ping_passed_mixed = ping_selected.iter().map(|r| r.link.clone()).collect();
+        // ذخیره نسخه Rename شده‌ی سالم‌ها در phase2 برای فایل ping.txt خروجی
+        phase2.ping_passed_mixed = ping_selected.iter()
+            .map(|r| rename_config(&r.link, tester_cfg, r, None))
+            .collect();
+            
         let _ = fs::remove_file(&ping_csv);
 
         log_worker(
@@ -598,18 +582,13 @@ pub fn filter_working_configs(
         );
     }
 
+    // کانفیگ‌های راه‌یافته به مرحله بعد (با حفظ لینک اورجینال برای تست‌های بعدی)
     let mut final_selected: Vec<TestResult> = if tester_cfg.ping_test_enabled {
-        ping_selected
+        ping_selected.clone()
     } else {
-        to_test
-            .iter()
-            .map(|link| TestResult {
-                link: link.clone(),
-                delay_ms: None,
-                download_kb: None,
-                country: None,
-            })
-            .collect()
+        to_test.iter().map(|link| TestResult {
+            link: link.clone(), delay_ms: None, download_kb: None, country: None,
+        }).collect()
     };
 
     if stop_flag.load(Ordering::SeqCst) {
@@ -620,15 +599,9 @@ pub fn filter_working_configs(
 
     if final_selected.is_empty() {
         let _ = fs::remove_file(&input_path);
-        log_worker(
-            &tx,
-            LogLevel::Warning,
-            "⚠️ No configs left after ping phase.".to_string(),
-        );
+        log_worker(&tx, LogLevel::Warning, "⚠️ No configs left after ping phase.".to_string());
         for (proto, links) in configs_map.iter_mut() {
-            if !NON_MIXED_PROTOCOLS.contains(&proto.as_str()) {
-                links.clear();
-            }
+            if !NON_MIXED_PROTOCOLS.contains(&proto.as_str()) { links.clear(); }
         }
         return phase2;
     }
@@ -640,17 +613,13 @@ pub fn filter_working_configs(
         let speed_input = build_temp_path("speed_candidates.txt");
         let speed_csv = build_temp_path("speed_results.csv");
 
-        let mut speed_targets: Vec<String> =
-            if tester_cfg.speed_test_from_ping_passed_only && tester_cfg.ping_test_enabled {
-                final_selected.iter().map(|r| r.link.clone()).collect()
-            } else {
-                to_test.clone()
-            };
+        let mut speed_targets: Vec<String> = if tester_cfg.speed_test_from_ping_passed_only && tester_cfg.ping_test_enabled {
+            final_selected.iter().map(|r| r.link.clone()).collect()
+        } else {
+            to_test.clone()
+        };
 
-        let top_n = tester_cfg
-            .speed_test_top_count
-            .max(1)
-            .min(speed_targets.len());
+        let top_n = tester_cfg.speed_test_top_count.max(1).min(speed_targets.len());
         speed_targets.truncate(top_n);
 
         log_worker(
@@ -659,41 +628,22 @@ pub fn filter_working_configs(
             format!(
                 "📦 Phase2/SPEED targets={} | source={} | remaining_after_speed=depends_on_results",
                 speed_targets.len(),
-                if tester_cfg.speed_test_from_ping_passed_only && tester_cfg.ping_test_enabled {
-                    "ping-passed"
-                } else {
-                    "all-phase1"
-                }
+                if tester_cfg.speed_test_from_ping_passed_only && tester_cfg.ping_test_enabled { "ping-passed" } else { "all-phase1" }
             ),
         );
 
         if fs::write(&speed_input, speed_targets.join("\n")).is_err() {
             let _ = fs::remove_file(&input_path);
-            log_worker(
-                &tx,
-                LogLevel::Error,
-                "❌ Failed to create speed candidates file.".to_string(),
-            );
+            log_worker(&tx, LogLevel::Error, "❌ Failed to create speed candidates file.".to_string());
             return phase2;
         }
 
-        let speed_url = if tester_cfg.speed_url_supports_bytes_query
-            && tester_cfg.speed_test_download_bytes > 0
-        {
+        let speed_url = if tester_cfg.speed_url_supports_bytes_query && tester_cfg.speed_test_download_bytes > 0 {
             if tester_cfg.speed_test_url.contains("{bytes}") {
-                tester_cfg
-                    .speed_test_url
-                    .replace("{bytes}", &tester_cfg.speed_test_download_bytes.to_string())
+                tester_cfg.speed_test_url.replace("{bytes}", &tester_cfg.speed_test_download_bytes.to_string())
             } else {
-                let separator = if tester_cfg.speed_test_url.contains('?') {
-                    "&"
-                } else {
-                    "?"
-                };
-                format!(
-                    "{}{}bytes={}",
-                    tester_cfg.speed_test_url, separator, tester_cfg.speed_test_download_bytes
-                )
+                let separator = if tester_cfg.speed_test_url.contains('?') { "&" } else { "?" };
+                format!("{}{}{}bytes={}", tester_cfg.speed_test_url, separator, tester_cfg.speed_test_download_bytes, "")
             }
         } else {
             tester_cfg.speed_test_url.clone()
@@ -717,50 +667,28 @@ pub fn filter_working_configs(
         ];
         append_extra_args(&mut args, &tester_cfg.extra_xray_args);
 
-        log_worker(
-            &tx,
-            LogLevel::Info,
-            format!("🚀 Phase2/SPEED start -> {}", speed_url),
-        );
+        log_worker(&tx, LogLevel::Info, format!("🚀 Phase2/SPEED start -> {}", speed_url));
         
-        // فراخوانی ابزار همراه با فرستادن tx برای نمایش زنده لاگ‌ها
         if run_xray_knife(tester_cfg, &args, &tx) {
             let mut speed_results = parse_csv_results(&speed_csv);
-            let parsed_with_speed = speed_results
-                .iter()
-                .filter(|item| item.download_kb.unwrap_or(0.0) > 0.0)
-                .count();
-            log_worker(
-                &tx,
-                LogLevel::Info,
-                format!(
-                    "🧾 Phase2/SPEED csv rows={} | with_download_metric={}",
-                    speed_results.len(),
-                    parsed_with_speed
-                ),
-            );
             
             speed_results.retain(|item| item.download_kb.unwrap_or(0.0) > 0.0);
             speed_results.sort_by(|a, b| b.download_kb.unwrap_or(0.0).partial_cmp(&a.download_kb.unwrap_or(0.0)).unwrap_or(std::cmp::Ordering::Equal));
             
-            phase2.speed_passed_mixed = speed_results.iter().map(|r| r.link.clone()).collect();
+            // ذخیره نسخه Rename شده‌ی کانفیگ‌های تست‌سرعت شده در phase2 برای فایل speed.txt
+            phase2.speed_passed_mixed = speed_results.iter().enumerate()
+                .map(|(i, r)| rename_config(&r.link, tester_cfg, r, Some(i + 1)))
+                .collect();
+
             if speed_results.is_empty() {
-                log_worker(
-                    &tx,
-                    LogLevel::Warning,
-                    "⚠️ Speed test returned 0 healthy configs. No config will pass speed stage in this cycle.".to_string(),
-                );
+                log_worker(&tx, LogLevel::Warning, "⚠️ Speed test returned 0 healthy configs.".to_string());
                 final_selected.clear();
             } else {
                 final_selected = speed_results;
                 use_rank = true;
             }
         } else {
-            log_worker(
-                &tx,
-                LogLevel::Warning,
-                "⚠️ Speed test failed to execute. Speed stage marked as failed; no config will pass this stage.".to_string(),
-            );
+            log_worker(&tx, LogLevel::Warning, "⚠️ Speed test failed to execute.".to_string());
             final_selected.clear();
             phase2.speed_passed_mixed.clear();
         }
@@ -771,9 +699,7 @@ pub fn filter_working_configs(
             format!(
                 "✅ Phase2/SPEED done | passed={} | removed={} | elapsed={}ms",
                 phase2.speed_passed_mixed.len(),
-                speed_targets
-                    .len()
-                    .saturating_sub(phase2.speed_passed_mixed.len()),
+                speed_targets.len().saturating_sub(phase2.speed_passed_mixed.len()),
                 speed_started.elapsed().as_millis()
             ),
         );
@@ -781,48 +707,29 @@ pub fn filter_working_configs(
         let _ = fs::remove_file(&speed_input);
         let _ = fs::remove_file(&speed_csv);
     } else {
-        phase2.speed_passed_mixed = final_selected.iter().map(|r| r.link.clone()).collect();
+        phase2.speed_passed_mixed = phase2.ping_passed_mixed.clone();
     }
 
     let _ = fs::remove_file(&input_path);
 
-    if final_selected.is_empty() {
-        log_worker(
-            &tx,
-            LogLevel::Warning,
-            "⚠️ PHASE 2 produced 0 final configs after active tests.".to_string(),
-        );
-    }
-
     for (proto, links) in configs_map.iter_mut() {
-        if !NON_MIXED_PROTOCOLS.contains(&proto.as_str()) {
-            links.clear();
-        }
+        if !NON_MIXED_PROTOCOLS.contains(&proto.as_str()) { links.clear(); }
     }
 
     let mut passed_count = 0usize;
     for (index, item) in final_selected.into_iter().enumerate() {
-        let Some(proto) = proto_by_link.get(&item.link) else {
-            continue;
-        };
-
-        let rank = if use_rank { Some(index + 1) } else { None };
-        let final_config = rename_config(&item.link, tester_cfg, &item, rank);
-        
-        configs_map
-            .entry(proto.clone())
-            .or_default()
-            .insert(final_config);
-        passed_count += 1;
+        if let Some(proto) = proto_by_link.get(&item.link) {
+            let rank = if use_rank { Some(index + 1) } else { None };
+            let final_config = rename_config(&item.link, tester_cfg, &item, rank);
+            configs_map.entry(proto.clone()).or_default().insert(final_config);
+            passed_count += 1;
+        }
     }
 
     log_worker(
         &tx,
         LogLevel::Success,
-        format!(
-            "🏁 PHASE 2 COMPLETE | final_passed={}/{}",
-            passed_count, total
-        ),
+        format!("🏁 PHASE 2 COMPLETE | final_passed={}/{}", passed_count, total),
     );
     phase2
 }
