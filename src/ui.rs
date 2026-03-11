@@ -102,8 +102,11 @@ impl AppState {
 
     pub fn test_direct_connection(&mut self) {
         let tx = self.event_tx.clone();
-        self.add_log(LogLevel::Info, "Testing direct system connection (No Proxy) to soft98.ir...".to_string());
-        
+        self.add_log(
+            LogLevel::Info,
+            "Testing direct system connection (No Proxy) to soft98.ir...".to_string(),
+        );
+
         thread::spawn(move || {
             let start = Instant::now();
             let direct_client = reqwest::blocking::ClientBuilder::new()
@@ -111,14 +114,17 @@ impl AppState {
                 .timeout(Duration::from_secs(10))
                 .danger_accept_invalid_certs(true)
                 .build();
-                
+
             if let Ok(client) = direct_client {
                 match client.get("https://soft98.ir").send() {
                     Ok(resp) if resp.status().is_success() => {
                         let elapsed = start.elapsed().as_millis();
                         let _ = tx.send(AppEvent::Log(
                             LogLevel::Success,
-                            format!("🌐 Direct Connection Passed! soft98.ir loaded in {}ms", elapsed),
+                            format!(
+                                "🌐 Direct Connection Passed! soft98.ir loaded in {}ms",
+                                elapsed
+                            ),
                         ));
                     }
                     _ => {
@@ -146,8 +152,10 @@ impl AppState {
     }
 
     pub fn start(&mut self) {
-        if self.running { return; }
-        
+        if self.running {
+            return;
+        }
+
         let xray_path = &self.config.tester.xray_knife_path;
         if self.config.tester.enabled && !Path::new(xray_path).exists() {
             self.add_log(LogLevel::Error, "⛔ Cannot start: Tester is enabled but xray-knife.exe is missing. Download it first!".to_string());
@@ -167,10 +175,7 @@ impl AppState {
 
         self.worker_handle = Some(thread::spawn(move || {
             if let Err(err) = run_worker(cfg, channels_raw, stop_flag, tx.clone()) {
-                let _ = tx.send(AppEvent::Log(
-                    LogLevel::Error,
-                    format!("🔥 CRASH: {}", err),
-                ));
+                let _ = tx.send(AppEvent::Log(LogLevel::Error, format!("🔥 CRASH: {}", err)));
             }
             let _ = tx.send(AppEvent::WorkerStopped);
         }));
@@ -256,6 +261,7 @@ impl eframe::App for AppState {
                                 .size(13.0)
                                 .color(egui::Color32::from_rgb(120, 140, 160)),
                         );
+                        ui.hyperlink_to("📣 Channel: @vpnclashfa", "https://t.me/vpnclashfa");
                     });
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -263,17 +269,56 @@ impl eframe::App for AppState {
                         let is_busy = self.running || self.is_downloading.load(Ordering::SeqCst);
 
                         if self.running {
-                            if ui.add_sized(btn_size, egui::Button::new(egui::RichText::new("🛑 STOP ENGINE").size(15.0).strong().color(egui::Color32::WHITE)).fill(egui::Color32::from_rgb(220, 60, 60)).rounding(8.0)).clicked() {
+                            if ui
+                                .add_sized(
+                                    btn_size,
+                                    egui::Button::new(
+                                        egui::RichText::new("⏹ STOP ENGINE")
+                                            .size(15.0)
+                                            .strong()
+                                            .color(egui::Color32::WHITE),
+                                    )
+                                    .fill(egui::Color32::from_rgb(220, 60, 60))
+                                    .rounding(8.0),
+                                )
+                                .clicked()
+                            {
                                 self.stop();
                             }
                             ui.spinner();
                         } else {
                             ui.add_enabled_ui(!is_busy, |ui| {
-                                if ui.add_sized(btn_size, egui::Button::new(egui::RichText::new("▶ START ENGINE").size(15.0).strong().color(egui::Color32::WHITE)).fill(egui::Color32::from_rgb(40, 180, 100)).rounding(8.0)).clicked() {
+                                if ui
+                                    .add_sized(
+                                        btn_size,
+                                        egui::Button::new(
+                                            egui::RichText::new("▶ START ENGINE")
+                                                .size(15.0)
+                                                .strong()
+                                                .color(egui::Color32::WHITE),
+                                        )
+                                        .fill(egui::Color32::from_rgb(40, 180, 100))
+                                        .rounding(8.0),
+                                    )
+                                    .clicked()
+                                {
                                     self.start();
                                 }
                             });
-                            if ui.add_sized([130.0, 45.0], egui::Button::new(egui::RichText::new("💾 Save Settings").size(14.0).strong().color(egui::Color32::WHITE)).fill(egui::Color32::from_rgb(60, 120, 200)).rounding(8.0)).clicked() {
+                            if ui
+                                .add_sized(
+                                    [130.0, 45.0],
+                                    egui::Button::new(
+                                        egui::RichText::new("💾 Save Settings")
+                                            .size(14.0)
+                                            .strong()
+                                            .color(egui::Color32::WHITE),
+                                    )
+                                    .fill(egui::Color32::from_rgb(60, 120, 200))
+                                    .rounding(8.0),
+                                )
+                                .clicked()
+                            {
                                 self.save_all_settings();
                             }
                         }
@@ -301,7 +346,7 @@ impl eframe::App for AppState {
                         0 => {
                             ui.add_space(5.0);
                             ui.heading(egui::RichText::new("💻 Performance Profile").color(egui::Color32::GOLD));
-                            
+
                             let mut profile_changed = false;
                             egui::ComboBox::from_label("Hardware Profile")
                                 .selected_text(match self.config.performance {
@@ -342,7 +387,7 @@ impl eframe::App for AppState {
 
                             ui.add_space(15.0);
                             ui.heading(egui::RichText::new("🌐 Network & Proxy").color(egui::Color32::LIGHT_BLUE));
-                            
+
                             let mut proxy_changed = false;
                             ui.horizontal(|ui| {
                                 egui::ComboBox::from_id_salt("proxy_type")
@@ -356,11 +401,11 @@ impl eframe::App for AppState {
                                         if ui.selectable_value(&mut self.config.proxy_type, ProxyType::Http, "HTTP").changed() { proxy_changed = true; }
                                         if ui.selectable_value(&mut self.config.proxy_type, ProxyType::None, "Direct").changed() { proxy_changed = true; }
                                     });
-                                
+
                                 if ui.button("🔄 Test Proxy").clicked() { proxy_changed = true; }
                                 if ui.button("🌐 Test Direct").clicked() { self.test_direct_connection(); }
                             });
-                            
+
                             if proxy_changed { self.test_connection(); }
 
                             if matches!(self.config.proxy_type, ProxyType::Http | ProxyType::Socks5) {
@@ -388,9 +433,9 @@ impl eframe::App for AppState {
                                 ui.label("GitHub Repo:");
                                 ui.text_edit_singleline(&mut self.config.app_update_repo).on_hover_text("Format: username/repository");
                             });
-                            
+
                             ui.add_space(5.0);
-                            
+
                             if self.is_downloading.load(Ordering::SeqCst) {
                                 ui.horizontal(|ui| {
                                     ui.spinner();
@@ -399,7 +444,7 @@ impl eframe::App for AppState {
                             } else {
                                 if ui.button(egui::RichText::new("🚀 Update Collector App").size(13.0).color(egui::Color32::WHITE)).clicked() {
                                     self.is_downloading.store(true, Ordering::SeqCst);
-                                    
+
                                     let tx = self.event_tx.clone();
                                     let repo_name = self.config.app_update_repo.clone();
                                     let config_clone = self.config.clone();
@@ -438,7 +483,7 @@ impl eframe::App for AppState {
                         2 => {
                             ui.heading(egui::RichText::new("🎯 Protocols Filter").color(egui::Color32::LIGHT_BLUE));
                             ui.label(egui::RichText::new("Set Max Count to 0 for UNLIMITED").small().color(egui::Color32::GRAY));
-                            
+
                             for (name, rule) in &mut self.config.protocol_rules {
                                 ui.horizontal(|ui| {
                                     ui.checkbox(&mut rule.enabled, name);
@@ -454,7 +499,9 @@ impl eframe::App for AppState {
                         }
                         3 => {
                             ui.heading(egui::RichText::new("🔬 Phase 2 Tester Engine").color(egui::Color32::LIGHT_BLUE));
-                            ui.label(egui::RichText::new("Validates scraped configs directly using xray-knife.").small().color(egui::Color32::GRAY));
+                            ui.label(egui::RichText::new("Validates scraped configs via xray-knife in DIRECT mode (without app proxy).
+You can choose preset endpoints or enter custom URLs.
+For speed test on Telegram links, keep bytes-query disabled.").small().color(egui::Color32::GRAY));
                             ui.add_space(10.0);
 
                             ui.checkbox(&mut self.config.tester.enabled, "Enable Xray-Knife Tester");
@@ -472,25 +519,94 @@ impl eframe::App for AppState {
                                         ui.label("Timeout (secs):");
                                         ui.add(egui::DragValue::new(&mut self.config.tester.timeout_secs).range(1..=30));
                                     });
+                                    ui.add_space(5.0);
+                                    ui.separator();
+                                    ui.add_space(5.0);
+
+                                    ui.checkbox(&mut self.config.tester.ping_test_enabled, "Enable Ping Test");
                                     ui.horizontal(|ui| {
-                                        ui.label("Test URL:");
-                                        ui.text_edit_singleline(&mut self.config.tester.test_url);
+                                        ui.label("Ping URL:");
+                                        ui.text_edit_singleline(&mut self.config.tester.ping_test_url);
                                     });
-                                    
+                                    ui.horizontal(|ui| {
+                                        ui.label("Ping Preset:");
+                                        egui::ComboBox::from_id_salt("ping_preset")
+                                            .selected_text(match self.config.tester.ping_url_preset {
+                                                1 => "Telegram favicon",
+                                                2 => "Telegram homepage",
+                                                3 => "Google generate_204",
+                                                4 => "Cloudflare trace",
+                                                _ => "Custom",
+                                            })
+                                            .show_ui(ui, |ui| {
+                                                if ui.selectable_value(&mut self.config.tester.ping_url_preset, 1, "Telegram favicon").clicked() { self.config.tester.ping_test_url = "https://telegram.org/favicon.ico".to_string(); }
+                                                if ui.selectable_value(&mut self.config.tester.ping_url_preset, 2, "Telegram homepage").clicked() { self.config.tester.ping_test_url = "https://telegram.org/".to_string(); }
+                                                if ui.selectable_value(&mut self.config.tester.ping_url_preset, 3, "Google generate_204").clicked() { self.config.tester.ping_test_url = "https://www.gstatic.com/generate_204".to_string(); }
+                                                if ui.selectable_value(&mut self.config.tester.ping_url_preset, 4, "Cloudflare trace").clicked() { self.config.tester.ping_test_url = "https://1.1.1.1/cdn-cgi/trace".to_string(); }
+                                                ui.selectable_value(&mut self.config.tester.ping_url_preset, 0, "Custom");
+                                            });
+                                    });
+
                                     ui.add_space(5.0);
                                     ui.separator();
                                     ui.add_space(5.0);
 
                                     ui.checkbox(&mut self.config.tester.speed_test_enabled, "Enable Speed Test (Download bytes)");
-                                    ui.checkbox(&mut self.config.tester.append_ping_flag, "Append Ping to Config Name (e.g. [Ping:120ms])");
+                                    ui.horizontal(|ui| {
+                                        ui.label("Speed URL:");
+                                        ui.text_edit_singleline(&mut self.config.tester.speed_test_url);
+                                    });
+                                    ui.horizontal(|ui| {
+                                        ui.label("Speed Preset:");
+                                        egui::ComboBox::from_id_salt("speed_preset")
+                                            .selected_text(match self.config.tester.speed_url_preset {
+                                                1 => "Telegram web app js",
+                                                2 => "Telegram homepage",
+                                                3 => "Hetzner 10MB",
+                                                4 => "ThinkBroadband 5MB",
+                                                _ => "Custom",
+                                            })
+                                            .show_ui(ui, |ui| {
+                                                if ui.selectable_value(&mut self.config.tester.speed_url_preset, 1, "Telegram web app js").clicked() { self.config.tester.speed_test_url = "https://telegram.org/js/telegram-web-app.js".to_string(); self.config.tester.speed_url_supports_bytes_query = false; }
+                                                if ui.selectable_value(&mut self.config.tester.speed_url_preset, 2, "Telegram homepage").clicked() { self.config.tester.speed_test_url = "https://telegram.org/".to_string(); self.config.tester.speed_url_supports_bytes_query = false; }
+                                                if ui.selectable_value(&mut self.config.tester.speed_url_preset, 3, "Hetzner 10MB").clicked() { self.config.tester.speed_test_url = "https://speed.hetzner.de/10MB.bin".to_string(); self.config.tester.speed_url_supports_bytes_query = false; }
+                                                if ui.selectable_value(&mut self.config.tester.speed_url_preset, 4, "ThinkBroadband 5MB").clicked() { self.config.tester.speed_test_url = "https://ipv4.download.thinkbroadband.com/5MB.zip".to_string(); self.config.tester.speed_url_supports_bytes_query = false; }
+                                                ui.selectable_value(&mut self.config.tester.speed_url_preset, 0, "Custom");
+                                            });
+                                    });
+                                    ui.checkbox(&mut self.config.tester.speed_url_supports_bytes_query, "Append bytes query to Speed URL ({bytes} supported)");
+                                    ui.horizontal(|ui| {
+                                        ui.label("Speed Bytes:");
+                                        ui.add(egui::DragValue::new(&mut self.config.tester.speed_test_download_bytes).range(1024..=200_000_000));
+                                    });
+                                    ui.horizontal(|ui| {
+                                        ui.label("Speed Batch Size:");
+                                        ui.add(egui::DragValue::new(&mut self.config.tester.speed_test_batch_size).range(1..=100));
+                                    });
+                                    ui.horizontal(|ui| {
+                                        ui.label("Speed Timeout (secs):");
+                                        ui.add(egui::DragValue::new(&mut self.config.tester.speed_test_timeout_secs).range(1..=30));
+                                    });
+                                    ui.horizontal(|ui| {
+                                        ui.label("Top by Ping for Speed:");
+                                        ui.add(egui::DragValue::new(&mut self.config.tester.speed_test_top_count).range(1..=10_000));
+                                    });
+                                    ui.horizontal(|ui| {
+                                        ui.label("Extra xray-knife args:");
+                                        ui.text_edit_singleline(&mut self.config.tester.extra_xray_args)
+                                            .on_hover_text("Any extra flags supported by xray-knife http (advanced). Example: --insecure");
+                                    });
+                                    ui.checkbox(&mut self.config.tester.append_ping_flag, "Append Ping to Config Name");
+                                    ui.checkbox(&mut self.config.tester.append_speed_flag, "Append Download Speed to Config Name");
+                                    ui.checkbox(&mut self.config.tester.append_country_flag, "Append Country Flag Emoji to Config Name");
                                 });
 
                             ui.add_space(20.0);
                             ui.separator();
                             ui.add_space(10.0);
 
-                            ui.heading(egui::RichText::new("🛠️ Core Downloader").color(egui::Color32::GOLD));
-                            
+                            ui.heading(egui::RichText::new("Core Downloader").color(egui::Color32::GOLD));
+
                             ui.horizontal(|ui| {
                                 ui.label("Binary Path:");
                                 ui.text_edit_singleline(&mut self.config.tester.xray_knife_path);
@@ -506,7 +622,7 @@ impl eframe::App for AppState {
                             } else {
                                 if ui.button(egui::RichText::new("📥 Download / Update xray-knife").size(14.0).color(egui::Color32::WHITE)).clicked() {
                                     self.is_downloading.store(true, Ordering::SeqCst);
-                                    
+
                                     let tx = self.event_tx.clone();
                                     let target_path = self.config.tester.xray_knife_path.clone();
                                     let config_clone = self.config.clone();
@@ -540,12 +656,23 @@ impl eframe::App for AppState {
             });
 
         egui::CentralPanel::default()
-            .frame(egui::Frame::default().fill(egui::Color32::from_rgb(13, 15, 23)).inner_margin(15.0))
+            .frame(
+                egui::Frame::default()
+                    .fill(egui::Color32::from_rgb(13, 15, 23))
+                    .inner_margin(15.0),
+            )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     ui.group(|ui| {
-                        ui.label(egui::RichText::new("Extracted Total:").color(egui::Color32::GRAY));
-                        ui.label(egui::RichText::new(self.total_configs.to_string()).size(22.0).strong().color(egui::Color32::from_rgb(30, 180, 120)));
+                        ui.label(
+                            egui::RichText::new("Extracted Total:").color(egui::Color32::GRAY),
+                        );
+                        ui.label(
+                            egui::RichText::new(self.total_configs.to_string())
+                                .size(22.0)
+                                .strong()
+                                .color(egui::Color32::from_rgb(30, 180, 120)),
+                        );
                     });
                 });
 
@@ -556,14 +683,26 @@ impl eframe::App for AppState {
                     .inner_margin(10.0)
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
-                            ui.heading(egui::RichText::new("Terminal Log").color(egui::Color32::WHITE));
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                if ui.button("Clear").clicked() { self.logs.clear(); }
-                                if ui.button("Copy").clicked() {
-                                    let text = self.logs.iter().map(|l| format!("[{}] {}", l.time, l.text)).collect::<Vec<_>>().join("\n");
-                                    ctx.output_mut(|o| o.copied_text = text);
-                                }
-                            });
+                            ui.heading(
+                                egui::RichText::new("Terminal Log").color(egui::Color32::WHITE),
+                            );
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    if ui.button("Clear").clicked() {
+                                        self.logs.clear();
+                                    }
+                                    if ui.button("Copy").clicked() {
+                                        let text = self
+                                            .logs
+                                            .iter()
+                                            .map(|l| format!("[{}] {}", l.time, l.text))
+                                            .collect::<Vec<_>>()
+                                            .join("\n");
+                                        ctx.output_mut(|o| o.copied_text = text);
+                                    }
+                                },
+                            );
                         });
                         ui.separator();
                         egui::ScrollArea::vertical()
@@ -580,8 +719,15 @@ impl eframe::App for AppState {
                                         LogLevel::Error => egui::Color32::from_rgb(255, 90, 90),
                                     };
                                     ui.horizontal_wrapped(|ui| {
-                                        ui.label(egui::RichText::new(format!("[{}]", log.time)).color(egui::Color32::from_rgb(80, 90, 110)).monospace().small());
-                                        ui.label(egui::RichText::new(&log.text).color(color).monospace());
+                                        ui.label(
+                                            egui::RichText::new(format!("[{}]", log.time))
+                                                .color(egui::Color32::from_rgb(80, 90, 110))
+                                                .monospace()
+                                                .small(),
+                                        );
+                                        ui.label(
+                                            egui::RichText::new(&log.text).color(color).monospace(),
+                                        );
                                     });
                                 }
                             });
