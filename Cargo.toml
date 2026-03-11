@@ -3,12 +3,11 @@ name = "config-collector-windows"
 version = "0.2.0"
 edition = "2021"
 authors = ["Your Name <youremail@example.com>"]
-description = "Telegram Config Collector Pro (Ultra Fast Concurrent Edition)"
+description = "Telegram Config Collector Pro Phase 2"
 
 [dependencies]
 eframe = { version = "0.29", default-features = true }
 egui = "0.29"
-# قابلیت json به reqwest اضافه شد تا بتوانیم API گیت‌هاب را بخوانیم
 reqwest = { version = "0.12", default-features = true, features = ["blocking", "socks", "gzip", "brotli", "deflate", "charset", "json"] }
 regex = "1.11"
 chrono = { version = "0.4", features = ["serde"] }
@@ -17,8 +16,8 @@ serde_json = "1.0"
 toml = "0.8"
 anyhow = "1.0"
 base64 = "0.22"
-# کتابخانه zip برای استخراج فایل دانلود شده xray-knife اضافه شد
 zip = "0.6"
+self_replace = "1.4" # کتابخانه حیاتی برای جایگزینی فایل exe در حال اجرا در ویندوز
 
 [profile.release]
 opt-level = 3
