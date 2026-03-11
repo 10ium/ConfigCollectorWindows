@@ -523,8 +523,9 @@ pub fn filter_working_configs(
                 log_worker(
                     &tx,
                     LogLevel::Warning,
-                    "⚠️ Speed test returned 0 healthy configs. Keeping previous stage results for final output.".to_string(),
+                    "⚠️ Speed test returned 0 healthy configs. No config will pass speed stage in this cycle.".to_string(),
                 );
+                final_selected.clear();
             } else {
                 final_selected = speed_results;
             }
@@ -532,9 +533,10 @@ pub fn filter_working_configs(
             log_worker(
                 &tx,
                 LogLevel::Warning,
-                "⚠️ Speed test failed to execute. Keeping previous stage results.".to_string(),
+                "⚠️ Speed test failed to execute. Speed stage marked as failed; no config will pass this stage.".to_string(),
             );
-            phase2.speed_passed_mixed = final_selected.iter().map(|r| r.link.clone()).collect();
+            final_selected.clear();
+            phase2.speed_passed_mixed.clear();
         }
 
         log_worker(
@@ -557,6 +559,14 @@ pub fn filter_working_configs(
     }
 
     let _ = fs::remove_file(&input_path);
+
+    if final_selected.is_empty() {
+        log_worker(
+            &tx,
+            LogLevel::Warning,
+            "⚠️ PHASE 2 produced 0 final configs after active tests.".to_string(),
+        );
+    }
 
     for (proto, links) in configs_map.iter_mut() {
         if !NON_MIXED_PROTOCOLS.contains(&proto.as_str()) {
