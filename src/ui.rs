@@ -272,7 +272,7 @@ impl eframe::App for AppState {
                                 .add_sized(
                                     btn_size,
                                     egui::Button::new(
-                                        egui::RichText::new("🛑 STOP ENGINE")
+                                        egui::RichText::new("⏹ STOP ENGINE")
                                             .size(15.0)
                                             .strong()
                                             .color(egui::Color32::WHITE),
@@ -498,7 +498,9 @@ impl eframe::App for AppState {
                         }
                         3 => {
                             ui.heading(egui::RichText::new("🔬 Phase 2 Tester Engine").color(egui::Color32::LIGHT_BLUE));
-                            ui.label(egui::RichText::new("Validates scraped configs directly using xray-knife.").small().color(egui::Color32::GRAY));
+                            ui.label(egui::RichText::new("Validates scraped configs directly using xray-knife in DIRECT mode (without app proxy).
+Ping URL: lightweight endpoint for latency pass.
+Speed URL: downloadable file endpoint for throughput test.").small().color(egui::Color32::GRAY));
                             ui.add_space(10.0);
 
                             ui.checkbox(&mut self.config.tester.enabled, "Enable Xray-Knife Tester");
@@ -516,11 +518,6 @@ impl eframe::App for AppState {
                                         ui.label("Timeout (secs):");
                                         ui.add(egui::DragValue::new(&mut self.config.tester.timeout_secs).range(1..=30));
                                     });
-                                    ui.horizontal(|ui| {
-                                        ui.label("Test URL:");
-                                        ui.text_edit_singleline(&mut self.config.tester.test_url);
-                                    });
-
                                     ui.add_space(5.0);
                                     ui.separator();
                                     ui.add_space(5.0);
@@ -565,7 +562,7 @@ impl eframe::App for AppState {
                             ui.separator();
                             ui.add_space(10.0);
 
-                            ui.heading(egui::RichText::new("🛠️ Core Downloader").color(egui::Color32::GOLD));
+                            ui.heading(egui::RichText::new("Core Downloader").color(egui::Color32::GOLD));
 
                             ui.horizontal(|ui| {
                                 ui.label("Binary Path:");
