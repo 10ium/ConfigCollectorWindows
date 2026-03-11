@@ -37,7 +37,7 @@ pub enum PerformanceProfile {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ProtocolRule {
     pub enabled: bool,
-    pub max_count: usize,
+    pub max_count: usize, // 0 یعنی نامحدود
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -46,13 +46,8 @@ pub struct TesterConfig {
     pub enabled: bool,
     pub concurrent_tests: usize,
     pub timeout_secs: u64,
-    
-    // شخصی‌سازی تست‌ها
-    pub ping_enabled: bool,
-    pub ping_url: String,
+    pub test_url: String,
     pub speed_test_enabled: bool,
-    pub speed_test_url: String,
-    
     pub append_ping_flag: bool,
     pub xray_knife_path: String,
 }
@@ -63,12 +58,14 @@ impl Default for TesterConfig {
             enabled: true,
             concurrent_tests: 10,
             timeout_secs: 6,
-            ping_enabled: true,
-            ping_url: "https://www.google.com/generate_204".to_string(),
-            speed_test_enabled: false,
-            speed_test_url: "https://speed.cloudflare.com/__down?bytes=5000000".to_string(),
+            test_url: "https://t.me/vpnclashfa/1228".to_string(),
+            speed_test_enabled: true,
             append_ping_flag: false,
-            xray_knife_path: "xray-knife.exe".to_string(),
+            xray_knife_path: if cfg!(windows) {
+                "xray-knife.exe".to_string()
+            } else {
+                "xray-knife".to_string()
+            },
         }
     }
 }
@@ -91,7 +88,7 @@ pub struct AppConfig {
     pub output_directory: String,
     pub output_new_only_enabled: bool,
     pub output_append_unique_enabled: bool,
-    pub app_update_repo: String,
+    pub app_update_repo: String, // جایگزین شدن لینک مستقیم با نام مخزن گیت‌هاب
     pub protocol_rules: BTreeMap<String, ProtocolRule>,
     pub tester: TesterConfig,
 }
@@ -184,6 +181,9 @@ impl AppConfig {
     }
 }
 
+// -------------------------------------------------------------
+// ساختار حافظه هوشمند (Smart Memory)
+// -------------------------------------------------------------
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ChannelMemory {
     pub last_seen_ids: BTreeMap<String, u64>,
