@@ -261,6 +261,7 @@ impl eframe::App for AppState {
                                 .size(13.0)
                                 .color(egui::Color32::from_rgb(120, 140, 160)),
                         );
+                        ui.hyperlink_to("📣 Channel: @vpnclashfa", "https://t.me/vpnclashfa");
                     });
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -498,9 +499,9 @@ impl eframe::App for AppState {
                         }
                         3 => {
                             ui.heading(egui::RichText::new("🔬 Phase 2 Tester Engine").color(egui::Color32::LIGHT_BLUE));
-                            ui.label(egui::RichText::new("Validates scraped configs directly using xray-knife in DIRECT mode (without app proxy).
-Ping URL: lightweight endpoint for latency pass.
-Speed URL: downloadable file endpoint for throughput test.").small().color(egui::Color32::GRAY));
+                            ui.label(egui::RichText::new("Validates scraped configs via xray-knife in DIRECT mode (without app proxy).
+You can choose preset endpoints or enter custom URLs.
+For speed test on Telegram links, keep bytes-query disabled.").small().color(egui::Color32::GRAY));
                             ui.add_space(10.0);
 
                             ui.checkbox(&mut self.config.tester.enabled, "Enable Xray-Knife Tester");
@@ -527,6 +528,24 @@ Speed URL: downloadable file endpoint for throughput test.").small().color(egui:
                                         ui.label("Ping URL:");
                                         ui.text_edit_singleline(&mut self.config.tester.ping_test_url);
                                     });
+                                    ui.horizontal(|ui| {
+                                        ui.label("Ping Preset:");
+                                        egui::ComboBox::from_id_salt("ping_preset")
+                                            .selected_text(match self.config.tester.ping_url_preset {
+                                                1 => "Telegram favicon",
+                                                2 => "Telegram homepage",
+                                                3 => "Google generate_204",
+                                                4 => "Cloudflare trace",
+                                                _ => "Custom",
+                                            })
+                                            .show_ui(ui, |ui| {
+                                                if ui.selectable_value(&mut self.config.tester.ping_url_preset, 1, "Telegram favicon").clicked() { self.config.tester.ping_test_url = "https://telegram.org/favicon.ico".to_string(); }
+                                                if ui.selectable_value(&mut self.config.tester.ping_url_preset, 2, "Telegram homepage").clicked() { self.config.tester.ping_test_url = "https://telegram.org/".to_string(); }
+                                                if ui.selectable_value(&mut self.config.tester.ping_url_preset, 3, "Google generate_204").clicked() { self.config.tester.ping_test_url = "https://www.gstatic.com/generate_204".to_string(); }
+                                                if ui.selectable_value(&mut self.config.tester.ping_url_preset, 4, "Cloudflare trace").clicked() { self.config.tester.ping_test_url = "https://1.1.1.1/cdn-cgi/trace".to_string(); }
+                                                ui.selectable_value(&mut self.config.tester.ping_url_preset, 0, "Custom");
+                                            });
+                                    });
 
                                     ui.add_space(5.0);
                                     ui.separator();
@@ -537,6 +556,25 @@ Speed URL: downloadable file endpoint for throughput test.").small().color(egui:
                                         ui.label("Speed URL:");
                                         ui.text_edit_singleline(&mut self.config.tester.speed_test_url);
                                     });
+                                    ui.horizontal(|ui| {
+                                        ui.label("Speed Preset:");
+                                        egui::ComboBox::from_id_salt("speed_preset")
+                                            .selected_text(match self.config.tester.speed_url_preset {
+                                                1 => "Telegram web app js",
+                                                2 => "Telegram homepage",
+                                                3 => "Hetzner 10MB",
+                                                4 => "ThinkBroadband 5MB",
+                                                _ => "Custom",
+                                            })
+                                            .show_ui(ui, |ui| {
+                                                if ui.selectable_value(&mut self.config.tester.speed_url_preset, 1, "Telegram web app js").clicked() { self.config.tester.speed_test_url = "https://telegram.org/js/telegram-web-app.js".to_string(); self.config.tester.speed_url_supports_bytes_query = false; }
+                                                if ui.selectable_value(&mut self.config.tester.speed_url_preset, 2, "Telegram homepage").clicked() { self.config.tester.speed_test_url = "https://telegram.org/".to_string(); self.config.tester.speed_url_supports_bytes_query = false; }
+                                                if ui.selectable_value(&mut self.config.tester.speed_url_preset, 3, "Hetzner 10MB").clicked() { self.config.tester.speed_test_url = "https://speed.hetzner.de/10MB.bin".to_string(); self.config.tester.speed_url_supports_bytes_query = false; }
+                                                if ui.selectable_value(&mut self.config.tester.speed_url_preset, 4, "ThinkBroadband 5MB").clicked() { self.config.tester.speed_test_url = "https://ipv4.download.thinkbroadband.com/5MB.zip".to_string(); self.config.tester.speed_url_supports_bytes_query = false; }
+                                                ui.selectable_value(&mut self.config.tester.speed_url_preset, 0, "Custom");
+                                            });
+                                    });
+                                    ui.checkbox(&mut self.config.tester.speed_url_supports_bytes_query, "Append bytes query to Speed URL ({bytes} supported)");
                                     ui.horizontal(|ui| {
                                         ui.label("Speed Bytes:");
                                         ui.add(egui::DragValue::new(&mut self.config.tester.speed_test_download_bytes).range(1024..=200_000_000));
@@ -552,6 +590,11 @@ Speed URL: downloadable file endpoint for throughput test.").small().color(egui:
                                     ui.horizontal(|ui| {
                                         ui.label("Top by Ping for Speed:");
                                         ui.add(egui::DragValue::new(&mut self.config.tester.speed_test_top_count).range(1..=10_000));
+                                    });
+                                    ui.horizontal(|ui| {
+                                        ui.label("Extra xray-knife args:");
+                                        ui.text_edit_singleline(&mut self.config.tester.extra_xray_args)
+                                            .on_hover_text("Any extra flags supported by xray-knife http (advanced). Example: --insecure");
                                     });
                                     ui.checkbox(&mut self.config.tester.append_ping_flag, "Append Ping to Config Name");
                                     ui.checkbox(&mut self.config.tester.append_speed_flag, "Append Download Speed to Config Name");
