@@ -415,9 +415,16 @@ pub fn run_worker(
             // --- ذخیره سازی فاز دوم: فقط mixed ---
             let base_tested = Path::new(&config.output_directory).join("tested");
             let mut tested_mixed = BTreeSet::new();
-            for (proto, links) in &final_gathered {
-                if proto != "tg" && !crate::storage::NON_MIXED_PROTOCOLS.contains(&proto.as_str()) {
-                    tested_mixed.extend(links.iter().cloned());
+            tested_mixed.extend(phase2.ping_passed_mixed.iter().cloned());
+            tested_mixed.extend(phase2.speed_passed_mixed.iter().cloned());
+
+            if tested_mixed.is_empty() {
+                for (proto, links) in &final_gathered {
+                    if proto != "tg"
+                        && !crate::storage::NON_MIXED_PROTOCOLS.contains(&proto.as_str())
+                    {
+                        tested_mixed.extend(links.iter().cloned());
+                    }
                 }
             }
 
