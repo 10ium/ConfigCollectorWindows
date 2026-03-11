@@ -1,7 +1,9 @@
 use crate::config::{AppConfig, ChannelMemory, ProtocolRule, ProxyType, SentHistory};
 use crate::converter::convert_tested_to_clash;
+use crate::sender::send_tested_new_only_to_telegram;
 use crate::storage::{
-    write_files_standard, write_files_standard_append, write_flat_file_and_base64_append,
+    read_existing_set, write_files_standard, write_files_standard_append,
+    write_flat_file_and_base64, write_flat_file_and_base64_append,
 };
 use crate::tester::filter_working_configs; // فراخوانی تستر پیشرفته
 use anyhow::Result;
@@ -428,12 +430,32 @@ pub fn run_worker(
                 }
             }
 
-            let append_dir = base_tested.join("append");
+            let append_dir = base_tested.join("append_unique");
+            let existing_mixed =
+                read_existing_set(&append_dir.join("mixed.txt")).unwrap_or_default();
+            let new_mixed: BTreeSet<String> =
+                tested_mixed.difference(&existing_mixed).cloned().collect();
+
             let _ =
                 write_flat_file_and_base64_append(&append_dir, "ping", &phase2.ping_passed_mixed);
             let _ =
                 write_flat_file_and_base64_append(&append_dir, "speed", &phase2.speed_passed_mixed);
             let _ = write_flat_file_and_base64_append(&append_dir, "mixed", &tested_mixed);
+
+            let new_only_dir = base_tested.join("new_only");
+            let _ = write_flat_file_and_base64(&new_only_dir, "ping", &phase2.ping_passed_mixed);
+            let _ = write_flat_file_and_base64(&new_only_dir, "speed", &phase2.speed_passed_mixed);
+            let _ = write_flat_file_and_base64(&new_only_dir, "mixed", &new_mixed);
+
+            log_worker(
+                &tx,
+                LogLevel::Info,
+                format!(
+                    "📦 PHASE 2 OUTPUT | tested/new_only/mixed={} | tested/append_unique/mixed={}",
+                    new_mixed.len(),
+                    tested_mixed.len()
+                ),
+            );
 
             // --- فاز ۳: تبدیل به کلش ---
             convert_tested_to_clash(
@@ -444,6 +466,18 @@ pub fn run_worker(
                 &config.clash_converter,
                 &tx,
             );
+
+            // --- فاز ۵: ارسال امن به تلگرام ---
+            if config.phase5_telegram.enabled {
+                if let Err(err) = send_tested_new_only_to_telegram(
+                    &config.output_directory,
+                    &config.phase5_telegram,
+                    &config,
+                    &tx,
+                ) {
+                    log_worker(&tx, LogLevel::Error, format!("❌ PHASE 5 failed: {}", err));
+                }
+            }
         }
 
         // ثبت در تاریخچه نهایی و بروزرسانی آمار GUI
