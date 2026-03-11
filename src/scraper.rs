@@ -1,7 +1,7 @@
 use crate::config::{AppConfig, ChannelMemory, ProtocolRule, ProxyType, SentHistory};
 use crate::converter::convert_tested_to_clash;
 use crate::storage::{
-    write_files_standard, write_files_standard_append, write_mixed_only, write_mixed_only_append,
+    write_files_standard, write_files_standard_append, write_flat_file_and_base64_append,
 };
 use crate::tester::filter_working_configs; // فراخوانی تستر پیشرفته
 use anyhow::Result;
@@ -421,32 +421,18 @@ pub fn run_worker(
                 }
             }
 
-            if config.output_new_only_enabled {
-                let _ = write_mixed_only(&base_tested.join("new_only"), &tested_mixed);
-                let _ = write_mixed_only(
-                    &base_tested.join("new_only_ping"),
-                    &phase2.ping_passed_mixed,
-                );
-                let _ = write_mixed_only(
-                    &base_tested.join("new_only_speed"),
-                    &phase2.speed_passed_mixed,
-                );
-            }
-            if config.output_append_unique_enabled {
-                let _ = write_mixed_only_append(&base_tested.join("append_unique"), &tested_mixed);
-                let _ = write_mixed_only_append(
-                    &base_tested.join("append_unique_ping"),
-                    &phase2.ping_passed_mixed,
-                );
-                let _ = write_mixed_only_append(
-                    &base_tested.join("append_unique_speed"),
-                    &phase2.speed_passed_mixed,
-                );
-            }
+            let append_dir = base_tested.join("append");
+            let _ =
+                write_flat_file_and_base64_append(&append_dir, "ping", &phase2.ping_passed_mixed);
+            let _ =
+                write_flat_file_and_base64_append(&append_dir, "speed", &phase2.speed_passed_mixed);
+            let _ = write_flat_file_and_base64_append(&append_dir, "mixed", &tested_mixed);
 
             // --- فاز ۳: تبدیل به کلش ---
             convert_tested_to_clash(
                 &tested_mixed,
+                &phase2.ping_passed_mixed,
+                &phase2.speed_passed_mixed,
                 Path::new(&config.output_directory),
                 &config.clash_converter,
                 &tx,
