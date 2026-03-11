@@ -1,5 +1,8 @@
 use crate::config::{AppConfig, ChannelMemory, ProtocolRule, ProxyType, SentHistory};
-use crate::storage::{write_files_standard, write_files_standard_append};
+use crate::converter::convert_tested_to_clash;
+use crate::storage::{
+    write_files_standard, write_files_standard_append, write_flat_file_and_base64_append,
+};
 use crate::tester::filter_working_configs; // فراخوانی تستر پیشرفته
 use anyhow::Result;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
@@ -66,7 +69,8 @@ pub fn build_client(config: &AppConfig) -> Result<reqwest::blocking::Client> {
             ))?);
         }
     }
-    b.build().map_err(|e| anyhow::anyhow!("Failed to build client: {}", e))
+    b.build()
+        .map_err(|e| anyhow::anyhow!("Failed to build client: {}", e))
 }
 
 pub fn parse_channels(raw: &str) -> Vec<String> {
@@ -78,10 +82,13 @@ pub fn parse_channels(raw: &str) -> Vec<String> {
                 return Some(rest.to_string());
             }
             if line.contains("t.me/") {
-                return line
-                    .split("t.me/")
-                    .nth(1)
-                    .map(|x| x.split('?').next().unwrap_or_default().trim_matches('/').to_string());
+                return line.split("t.me/").nth(1).map(|x| {
+                    x.split('?')
+                        .next()
+                        .unwrap_or_default()
+                        .trim_matches('/')
+                        .to_string()
+                });
             }
             Some(line.to_string())
         })
@@ -146,7 +153,10 @@ pub fn run_worker(
         let new_memory = Arc::new(Mutex::new(channel_memory.clone()));
 
         let mut handles = vec![];
-        let threads_count = config.concurrent_channels.max(1).min(total_channels_count.max(1));
+        let threads_count = config
+            .concurrent_channels
+            .max(1)
+            .min(total_channels_count.max(1));
 
         for _ in 0..threads_count {
             let q = queue.clone();
@@ -348,7 +358,10 @@ pub fn run_worker(
             .unwrap()
             .into_inner()
             .unwrap();
-        let total_run = Arc::try_unwrap(total_run_configs).unwrap().into_inner().unwrap();
+        let total_run = Arc::try_unwrap(total_run_configs)
+            .unwrap()
+            .into_inner()
+            .unwrap();
         channel_memory = Arc::try_unwrap(new_memory).unwrap().into_inner().unwrap();
 
         let _ = channel_memory.save();
@@ -369,40 +382,61 @@ pub fn run_worker(
         for (proto, links) in &final_gathered {
             for link in links {
                 if !history.sent_at.contains_key(link) {
-                    new_untested.entry(proto.clone()).or_default().insert(link.clone());
+                    new_untested
+                        .entry(proto.clone())
+                        .or_default()
+                        .insert(link.clone());
                 }
             }
         }
-        
+
         if config.output_new_only_enabled && !new_untested.is_empty() {
             let _ = write_files_standard(&base_untested.join("new_only"), &new_untested);
         }
         if config.output_append_unique_enabled && !final_gathered.is_empty() {
-            let _ = write_files_standard_append(&base_untested.join("append_unique"), &final_gathered);
+            let _ =
+                write_files_standard_append(&base_untested.join("append_unique"), &final_gathered);
         }
 
         // --- مرحله دوم: تست (فاز ۲) ---
         if config.tester.enabled {
-            filter_working_configs(&mut final_gathered, &config.tester, stop.clone(), tx.clone());
-            
-            // --- ذخیره سازی فاز دوم (کانفیگ‌های سالم/تست شده با پرچم) ---
+            log_worker(
+                &tx,
+                LogLevel::Info,
+                "🧪 Phase 2 pipeline entered...".to_string(),
+            );
+            let phase2 = filter_working_configs(
+                &mut final_gathered,
+                &config.tester,
+                stop.clone(),
+                tx.clone(),
+            );
+
+            // --- ذخیره سازی فاز دوم: فقط mixed ---
             let base_tested = Path::new(&config.output_directory).join("tested");
-            let mut new_tested: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+            let mut tested_mixed = BTreeSet::new();
             for (proto, links) in &final_gathered {
-                for link in links {
-                    // تاریخچه برای جلوگیری از تکرار در new_only
-                    if !history.sent_at.contains_key(link) {
-                        new_tested.entry(proto.clone()).or_default().insert(link.clone());
-                    }
+                if proto != "tg" && !crate::storage::NON_MIXED_PROTOCOLS.contains(&proto.as_str()) {
+                    tested_mixed.extend(links.iter().cloned());
                 }
             }
 
-            if config.output_new_only_enabled && !new_tested.is_empty() {
-                let _ = write_files_standard(&base_tested.join("new_only"), &new_tested);
-            }
-            if config.output_append_unique_enabled && !final_gathered.is_empty() {
-                let _ = write_files_standard_append(&base_tested.join("append_unique"), &final_gathered);
-            }
+            let append_dir = base_tested.join("append");
+            let _ =
+                write_flat_file_and_base64_append(&append_dir, "ping", &phase2.ping_passed_mixed);
+            let _ =
+                write_flat_file_and_base64_append(&append_dir, "speed", &phase2.speed_passed_mixed);
+            let _ = write_flat_file_and_base64_append(&append_dir, "mixed", &tested_mixed);
+
+            // --- فاز ۳: تبدیل به کلش ---
+            convert_tested_to_clash(
+                &tested_mixed,
+                &phase2.ping_passed_mixed,
+                &phase2.speed_passed_mixed,
+                Path::new(&config.output_directory),
+                &config.clash_converter,
+                &tx,
+            );
         }
 
         // ثبت در تاریخچه نهایی و بروزرسانی آمار GUI
