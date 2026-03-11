@@ -13,9 +13,33 @@ pub const MEMORY_PATH: &str = "config/channel_memory.json";
 pub const DEFAULT_TARGETS: &str = "@IranProxyPlus\nhttps://t.me/filembad\nhttps://t.me/persianvpnhub\nhttps://t.me/Speeds_vpn1\n@SOSkeyNET\nhttps://t.me/vasl_bashim\n@configraygan\nhttps://t.me/AR14N24B";
 
 pub const DEFAULT_PROTOCOLS: [&str; 27] = [
-    "vmess", "vless", "trojan", "ss", "ssr", "tuic", "hysteria", "hysteria2", "hy2", "juicity",
-    "snell", "anytls", "ssh", "wireguard", "wg", "warp", "socks", "socks4", "socks5", "tg", "dns",
-    "nm-dns", "nm-vless", "slipnet-enc", "slipnet", "slipstream", "dnstt",
+    "vmess",
+    "vless",
+    "trojan",
+    "ss",
+    "ssr",
+    "tuic",
+    "hysteria",
+    "hysteria2",
+    "hy2",
+    "juicity",
+    "snell",
+    "anytls",
+    "ssh",
+    "wireguard",
+    "wg",
+    "warp",
+    "socks",
+    "socks4",
+    "socks5",
+    "tg",
+    "dns",
+    "nm-dns",
+    "nm-vless",
+    "slipnet-enc",
+    "slipnet",
+    "slipstream",
+    "dnstt",
 ];
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -47,8 +71,17 @@ pub struct TesterConfig {
     pub concurrent_tests: usize,
     pub timeout_secs: u64,
     pub test_url: String,
+    pub ping_test_enabled: bool,
+    pub ping_test_url: String,
     pub speed_test_enabled: bool,
+    pub speed_test_url: String,
+    pub speed_test_download_bytes: u64,
+    pub speed_test_top_count: usize,
+    pub speed_test_batch_size: usize,
+    pub speed_test_timeout_secs: u64,
     pub append_ping_flag: bool,
+    pub append_speed_flag: bool,
+    pub append_country_flag: bool,
     pub xray_knife_path: String,
 }
 
@@ -59,8 +92,17 @@ impl Default for TesterConfig {
             concurrent_tests: 10,
             timeout_secs: 6,
             test_url: "https://t.me/vpnclashfa/1228".to_string(),
+            ping_test_enabled: false,
+            ping_test_url: "https://cp.cloudflare.com/generate_204".to_string(),
             speed_test_enabled: true,
+            speed_test_url: "https://telegram.org/js/telegram-web-app.js".to_string(),
+            speed_test_download_bytes: 5_000_000,
+            speed_test_top_count: 300,
+            speed_test_batch_size: 10,
+            speed_test_timeout_secs: 6,
             append_ping_flag: false,
+            append_speed_flag: false,
+            append_country_flag: false,
             xray_knife_path: if cfg!(windows) {
                 "xray-knife.exe".to_string()
             } else {
