@@ -100,7 +100,6 @@ impl AppState {
         });
     }
 
-    // تست دسترسی دایرکت برای اطمینان از صحت فاز 2 (بدون پروکسی)
     pub fn test_direct_connection(&mut self) {
         let tx = self.event_tx.clone();
         self.add_log(LogLevel::Info, "Testing direct system connection (No Proxy) to soft98.ir...".to_string());
@@ -381,6 +380,52 @@ impl eframe::App for AppState {
                             ui.horizontal(|ui| { ui.label("Folder:"); ui.text_edit_singleline(&mut self.config.output_directory).on_hover_text("Directory path to save results."); });
                             ui.checkbox(&mut self.config.output_new_only_enabled, "Save New Configs Only (new_only)");
                             ui.checkbox(&mut self.config.output_append_unique_enabled, "Backup Unique Configs (append_unique)");
+
+                            // --- بخش جدید اضافه شده برای آپدیت خود برنامه ---
+                            ui.add_space(15.0);
+                            ui.heading(egui::RichText::new("🔄 Application Update").color(egui::Color32::from_rgb(200, 150, 255)));
+                            ui.horizontal(|ui| {
+                                ui.label("GitHub Repo:");
+                                ui.text_edit_singleline(&mut self.config.app_update_repo).on_hover_text("Format: username/repository");
+                            });
+                            
+                            ui.add_space(5.0);
+                            
+                            if self.is_downloading.load(Ordering::SeqCst) {
+                                ui.horizontal(|ui| {
+                                    ui.spinner();
+                                    ui.label(egui::RichText::new("Processing update... Please wait.").color(egui::Color32::YELLOW));
+                                });
+                            } else {
+                                if ui.button(egui::RichText::new("🚀 Update Collector App").size(13.0).color(egui::Color32::WHITE)).clicked() {
+                                    self.is_downloading.store(true, Ordering::SeqCst);
+                                    
+                                    let tx = self.event_tx.clone();
+                                    let repo_name = self.config.app_update_repo.clone();
+                                    let config_clone = self.config.clone();
+                                    let downloading_flag = self.is_downloading.clone();
+
+                                    thread::spawn(move || {
+                                        match build_client(&config_clone) {
+                                            Ok(client) => {
+                                                if let Err(e) = crate::updater::update_main_app(client, repo_name, tx.clone()) {
+                                                    let _ = tx.send(AppEvent::Log(
+                                                        LogLevel::Error,
+                                                        format!("❌ App Update Failed: {}", e)
+                                                    ));
+                                                }
+                                            },
+                                            Err(e) => {
+                                                let _ = tx.send(AppEvent::Log(
+                                                    LogLevel::Error,
+                                                    format!("❌ Failed to build network client: {}", e)
+                                                ));
+                                            }
+                                        }
+                                        downloading_flag.store(false, Ordering::SeqCst);
+                                    });
+                                }
+                            }
                         }
                         1 => {
                             ui.heading(egui::RichText::new("📡 Target Channels").color(egui::Color32::LIGHT_BLUE));
@@ -436,7 +481,6 @@ impl eframe::App for AppState {
                                     ui.separator();
                                     ui.add_space(5.0);
 
-                                    // تنظیمات جدید تست سرعت و اضافه کردن پرچم پینگ
                                     ui.checkbox(&mut self.config.tester.speed_test_enabled, "Enable Speed Test (Download bytes)");
                                     ui.checkbox(&mut self.config.tester.append_ping_flag, "Append Ping to Config Name (e.g. [Ping:120ms])");
                                 });
