@@ -7,13 +7,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::config::TesterConfig;
 use crate::scraper::{log_worker, AppEvent, LogLevel};
 use crate::storage::NON_MIXED_PROTOCOLS;
 
-/// پیدا کردن یک پورت آزاد برای اجرای پروکسی محلی (جلوگیری از تداخل پورت‌ها در تست همزمان)
+/// پیدا کردن یک پورت آزاد برای اجرای پروکسی محلی (جلوگیری از تداخل در تست همزمان)
 fn get_available_port(start: u16) -> u16 {
     let mut port = start;
     loop {
@@ -22,8 +22,20 @@ fn get_available_port(start: u16) -> u16 {
         }
         port += 1;
         if port > 65000 {
-            return start; // بازگشت به پورت پیش‌فرض در صورت پر بودن همه پورت‌ها (بعید است اتفاق بیفتد)
+            return start;
         }
+    }
+}
+
+/// تابع کمکی برای اضافه کردن زمان پینگ به انتهای نام کانفیگ
+fn append_ping_to_config(config_str: &str, ping_ms: u128) -> String {
+    let flag = format!("[Ping:{}ms]", ping_ms);
+    if let Some(pos) = config_str.rfind('#') {
+        // اگر از قبل نام (Remark) دارد، پرچم را به آن اضافه می‌کنیم
+        format!("{}-{}", config_str, flag)
+    } else {
+        // اگر نام ندارد، یک هش‌تگ جدید ایجاد می‌کنیم
+        format!("{}#{}", config_str, flag)
     }
 }
 
@@ -38,7 +50,7 @@ pub fn filter_working_configs(
         return;
     }
 
-    // جدا کردن کانفیگ‌های قابل تست (نادیده گرفتن tg, dns و ...)
+    // جدا کردن کانفیگ‌های قابل تست
     let mut to_test = Vec::new();
     for (proto, links) in configs_map.iter() {
         if !NON_MIXED_PROTOCOLS.contains(&proto.as_str()) {
@@ -53,13 +65,20 @@ pub fn filter_working_configs(
         return;
     }
 
-    log_worker(&tx, LogLevel::Warning, format!("🔬 PHASE 2: Testing {} configs using xray-knife. This may take a while...", total));
+    log_worker(
+        &tx,
+        LogLevel::Warning,
+        format!(
+            "🔬 PHASE 2: Testing {} configs... (SpeedTest: {}, AddPing: {})",
+            total, tester_cfg.speed_test_enabled, tester_cfg.append_ping_flag
+        ),
+    );
 
     let queue = Arc::new(Mutex::new(to_test));
-    let working_configs = Arc::new(Mutex::new(BTreeSet::new()));
+    // ذخیره نتیجه به صورت (پروتکل، کانفیگ_نهایی)
+    let working_configs = Arc::new(Mutex::new(Vec::new()));
     let mut handles = vec![];
 
-    // تعیین تعداد پردازش‌های همزمان (مثلاً 10 تا)
     let threads_count = tester_cfg.concurrent_tests.max(1).min(total);
     let base_port = 20000;
 
@@ -69,13 +88,15 @@ pub fn filter_working_configs(
         let cfg = tester_cfg.clone();
         let stop = stop_flag.clone();
         let tx_c = tx.clone();
-        let initial_port = base_port + (i as u16) * 10; // فاصله 10 تایی بین پورت‌ها برای اطمینان بیشتر
+        let initial_port = base_port + (i as u16) * 10;
 
         handles.push(thread::spawn(move || {
             loop {
-                if stop.load(Ordering::SeqCst) { break; }
+                if stop.load(Ordering::SeqCst) {
+                    break;
+                }
 
-                let (proto, config_str) = {
+                let (proto, original_config_str) = {
                     let mut lock = q.lock().unwrap();
                     match lock.pop() {
                         Some(item) => item,
@@ -83,24 +104,36 @@ pub fn filter_working_configs(
                     }
                 };
 
-                // دریافت پورت خالی ایمن برای این ترد
                 let p = get_available_port(initial_port);
 
-                // 1. اجرای xray-knife در پس‌زمینه (استفاده از stdin/stdout نال برای جلوگیری از قفل شدن)
+                // ۱. اجرای xray-knife
                 let mut child = match Command::new(&cfg.xray_knife_path)
-                    .args(&["proxy", "--inbound", "socks", "--port", &p.to_string(), "-c", &config_str])
+                    .args(&[
+                        "proxy",
+                        "--inbound",
+                        "socks",
+                        "--port",
+                        &p.to_string(),
+                        "-c",
+                        &original_config_str,
+                    ])
                     .stdout(Stdio::null())
                     .stderr(Stdio::null())
                     .stdin(Stdio::null())
-                    .spawn() {
-                        Ok(c) => c,
-                        Err(e) => {
-                            log_worker(&tx_c, LogLevel::Error, format!("⚠️ xray-knife Missing! Path: '{}'. Error: {}", cfg.xray_knife_path, e));
-                            break; // خروج کامل ترد در صورت عدم یافتن فایل ابزار
-                        }
-                    };
+                    .spawn()
+                {
+                    Ok(c) => c,
+                    Err(e) => {
+                        log_worker(
+                            &tx_c,
+                            LogLevel::Error,
+                            format!("⚠️ xray-knife Missing! Path: '{}'. Error: {}", cfg.xray_knife_path, e),
+                        );
+                        break;
+                    }
+                };
 
-                // فرصت 1.5 ثانیه‌ای برای بالا آمدن هسته xray و بایند شدن روی پورت
+                // مهلت برای بالا آمدن هسته و بایند شدن روی پورت
                 thread::sleep(Duration::from_millis(1500));
 
                 if stop.load(Ordering::SeqCst) {
@@ -110,49 +143,69 @@ pub fn filter_working_configs(
                 }
 
                 let mut is_working = false;
+                let mut ping_time = 0;
                 let loop_proxy_url = format!("socks5://127.0.0.1:{}", p);
 
-                // 2. ساخت کلاینت دایرکت، صرفاً متصل به این پورت محلی
+                // ۲. ساخت کلاینت دایرکت، صرفاً متصل به این پورت محلی
                 if let Ok(loop_proxy) = reqwest::Proxy::all(&loop_proxy_url) {
                     if let Ok(client) = ClientBuilder::new()
                         .no_proxy() // مهم: غیرفعال کردن صد در صدی پروکسی سیستم تا تست واقعی باشد
-                        .proxy(loop_proxy) // اعمال پروکسی محلی تولید شده توسط xray-knife
-                        .timeout(Duration::from_secs(cfg.timeout_secs)) // 6 ثانیه مهلت برای دریافت پاسخ
+                        .proxy(loop_proxy)
+                        .timeout(Duration::from_secs(cfg.timeout_secs))
                         .danger_accept_invalid_certs(true)
-                        .build() {
-                            
-                            // 3. تلاش برای دانلود فایل/محتوا از لینک تست
-                            if let Ok(mut resp) = client.get(&cfg.test_url).send() {
-                                if resp.status().is_success() {
-                                    let mut buf = [0; 512];
-                                    // تست دریافت حجم بزرگتر از 0 بایت (اثبات برقراری کانکشن و تبادل ترافیک)
+                        .build()
+                    {
+                        let start_time = Instant::now();
+                        
+                        // ۳. تلاش برای ارتباط و دانلود
+                        if let Ok(mut resp) = client.get(&cfg.test_url).send() {
+                            if resp.status().is_success() {
+                                if cfg.speed_test_enabled {
+                                    let mut buf = [0; 1024]; // تست دریافت حداقل ۱ کیلوبایت
                                     if let Ok(read_bytes) = resp.read(&mut buf) {
                                         if read_bytes > 0 {
                                             is_working = true;
+                                            ping_time = start_time.elapsed().as_millis();
                                         }
                                     }
+                                } else {
+                                    // اگر تست سرعت خاموش باشد، فقط هدرهای موفقیت‌آمیز کافیست
+                                    is_working = true;
+                                    ping_time = start_time.elapsed().as_millis();
                                 }
                             }
+                        }
                     }
                 }
 
-                // 4. بستن اجباری و پاکسازی پروسه xray-knife برای جلوگیری از مصرف رم و ایجاد Zombie
+                // ۴. بستن اجباری و پاکسازی پروسه
                 let _ = child.kill();
-                let _ = child.wait(); 
+                let _ = child.wait();
 
                 if is_working {
-                    w.lock().unwrap().insert(config_str.clone());
-                    // چاپ لاگ موفقیت در کنسول (با رنگ سبز)
-                    log_worker(&tx_c, LogLevel::Success, format!("✔️ [PASS] {}", proto));
+                    let final_config = if cfg.append_ping_flag {
+                        append_ping_to_config(&original_config_str, ping_time)
+                    } else {
+                        original_config_str.clone()
+                    };
+
+                    w.lock().unwrap().push((proto.clone(), final_config));
+                    log_worker(
+                        &tx_c,
+                        LogLevel::Success,
+                        format!("✔️ [PASS] {} (Ping: {}ms)", proto, ping_time),
+                    );
                 } else {
-                    // چاپ لاگ خطا/تایم‌اوت در کنسول (با رنگ خاکستری/دیباگ)
-                    log_worker(&tx_c, LogLevel::Debug, format!("❌ [TIMEOUT/0KB] {}", proto));
+                    log_worker(
+                        &tx_c,
+                        LogLevel::Debug,
+                        format!("❌ [FAILED/TIMEOUT] {}", proto),
+                    );
                 }
             }
         }));
     }
 
-    // منتظر ماندن تا اتمام کار تمام تردها
     for h in handles {
         let _ = h.join();
     }
@@ -162,16 +215,24 @@ pub fn filter_working_configs(
         return;
     }
 
-    let working_set = Arc::try_unwrap(working_configs).unwrap().into_inner().unwrap();
-    let passed_count = working_set.len();
+    let working_list = Arc::try_unwrap(working_configs).unwrap().into_inner().unwrap();
+    let passed_count = working_list.len();
 
-    log_worker(&tx, LogLevel::Success, format!("🏁 Testing Complete: {}/{} passed Phase 2.", passed_count, total));
+    log_worker(
+        &tx,
+        LogLevel::Success,
+        format!("🏁 Testing Complete: {}/{} passed Phase 2.", passed_count, total),
+    );
 
-    // 5. اعمال فیلتر نهایی روی نقشه‌ی اصلی کانفیگ‌ها
+    // ۵. جایگزینی کامل نقشه کانفیگ‌ها با کانفیگ‌های تایید شده (و احتمالاً تغییر نام یافته)
     for (proto, links) in configs_map.iter_mut() {
-        // پروتکل‌هایی که قابل تست نبودند دست‌نخورده باقی می‌مانند
         if !NON_MIXED_PROTOCOLS.contains(&proto.as_str()) {
-            links.retain(|link| working_set.contains(link));
+            links.clear(); // پاک کردن کانفیگ‌های تست نشده
         }
+    }
+
+    // اضافه کردن مجدد کانفیگ‌های سالم به نقشه
+    for (proto, config) in working_list {
+        configs_map.entry(proto).or_default().insert(config);
     }
 }
