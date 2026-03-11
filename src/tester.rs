@@ -102,6 +102,15 @@ fn run_xray_knife(tester_cfg: &TesterConfig, args: &[String]) -> bool {
     command.status().map(|s| s.success()).unwrap_or(false)
 }
 
+fn append_extra_args(args: &mut Vec<String>, extra: &str) {
+    args.extend(
+        extra
+            .split_whitespace()
+            .filter(|s| !s.trim().is_empty())
+            .map(|s| s.to_string()),
+    );
+}
+
 fn build_temp_path(file_name: &str) -> String {
     let ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -268,7 +277,7 @@ pub fn filter_working_configs(
         let timeout_ms = (tester_cfg.timeout_secs.max(1) * 1000).to_string();
         let ping_url = tester_cfg.ping_test_url.clone();
 
-        let args = vec![
+        let mut args = vec![
             "http".to_string(),
             "-f".to_string(),
             input_path.clone(),
@@ -283,6 +292,8 @@ pub fn filter_working_configs(
             "-a".to_string(),
             timeout_ms,
         ];
+
+        append_extra_args(&mut args, &tester_cfg.extra_xray_args);
 
         if !run_xray_knife(tester_cfg, &args) {
             log_worker(
@@ -354,21 +365,29 @@ pub fn filter_working_configs(
             return;
         }
 
-        let speed_url = if tester_cfg.speed_test_download_bytes > 0 {
-            let separator = if tester_cfg.speed_test_url.contains('?') {
-                "&"
+        let speed_url = if tester_cfg.speed_url_supports_bytes_query
+            && tester_cfg.speed_test_download_bytes > 0
+        {
+            if tester_cfg.speed_test_url.contains("{bytes}") {
+                tester_cfg
+                    .speed_test_url
+                    .replace("{bytes}", &tester_cfg.speed_test_download_bytes.to_string())
             } else {
-                "?"
-            };
-            format!(
-                "{}{}bytes={}",
-                tester_cfg.speed_test_url, separator, tester_cfg.speed_test_download_bytes
-            )
+                let separator = if tester_cfg.speed_test_url.contains('?') {
+                    "&"
+                } else {
+                    "?"
+                };
+                format!(
+                    "{}{}bytes={}",
+                    tester_cfg.speed_test_url, separator, tester_cfg.speed_test_download_bytes
+                )
+            }
         } else {
             tester_cfg.speed_test_url.clone()
         };
 
-        let args = vec![
+        let mut args = vec![
             "http".to_string(),
             "-f".to_string(),
             speed_input.clone(),
@@ -384,6 +403,8 @@ pub fn filter_working_configs(
             "-a".to_string(),
             (tester_cfg.speed_test_timeout_secs.max(1) * 1000).to_string(),
         ];
+
+        append_extra_args(&mut args, &tester_cfg.extra_xray_args);
 
         if run_xray_knife(tester_cfg, &args) {
             let mut speed_results = parse_csv_results(&speed_csv);
