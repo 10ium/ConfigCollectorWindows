@@ -6,6 +6,8 @@ use serde_json::Value;
 use std::fs;
 use std::path::Path;
 use std::sync::mpsc::Sender;
+use std::thread;
+use std::time::Duration;
 
 fn escape_html(text: &str) -> String {
     text.replace('&', "&amp;")
@@ -67,6 +69,16 @@ fn validate_telegram_target(client: &Client, cfg: &Phase5TelegramConfig) -> Resu
     }
 
     Ok(())
+}
+
+fn extract_retry_after_seconds(msg: &str) -> Option<u64> {
+    let needle = "\"retry_after\":";
+    let idx = msg.find(needle)? + needle.len();
+    let digits: String = msg[idx..]
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
+    digits.parse::<u64>().ok()
 }
 
 fn post_message(client: &Client, cfg: &Phase5TelegramConfig, text: &str) -> Result<()> {
@@ -170,7 +182,35 @@ pub fn send_tested_new_only_to_telegram(
         }
 
         let body = message_lines.join("\n");
-        post_message(&client, cfg, &body)?;
+
+        let mut attempt = 0usize;
+        loop {
+            attempt += 1;
+            match post_message(&client, cfg, &body) {
+                Ok(_) => break,
+                Err(err) => {
+                    if let Some(wait_secs) = extract_retry_after_seconds(&err.to_string()) {
+                        if attempt >= 5 {
+                            return Err(err);
+                        }
+                        log_worker(
+                            tx,
+                            LogLevel::Warning,
+                            format!(
+                                "⏳ PHASE 5 rate-limited on post {}/{} (attempt {}). Retrying after {}s...",
+                                idx + 1,
+                                chunks.len(),
+                                attempt,
+                                wait_secs
+                            ),
+                        );
+                        thread::sleep(Duration::from_secs(wait_secs + 1));
+                        continue;
+                    }
+                    return Err(err);
+                }
+            }
+        }
 
         log_worker(
             tx,
@@ -183,6 +223,8 @@ pub fn send_tested_new_only_to_telegram(
                 chunks.len().saturating_sub(idx + 1)
             ),
         );
+
+        thread::sleep(Duration::from_millis(700));
     }
 
     log_worker(
