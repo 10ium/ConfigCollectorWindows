@@ -138,18 +138,32 @@ fn parse_csv_results(path: &str) -> Vec<TestResult> {
         return Vec::new();
     };
 
-    let headers: Vec<String> = split_csv_line(header_line)
+    let headers: Vec<String> = split_csv_line_auto(header_line)
         .into_iter()
         .map(|h| h.trim().trim_matches('"').to_lowercase())
         .collect();
 
     let link_idx = headers
         .iter()
-        .position(|h| h == "link" || h == "config")
+        .position(|h| {
+            h == "link"
+                || h == "config"
+                || h == "proxy"
+                || h == "outbound"
+                || h == "url"
+                || h.contains("link")
+                || h.contains("config")
+        })
         .unwrap_or(0);
     let delay_idx = headers
         .iter()
-        .position(|h| h == "delay" || h.contains("delay") || h.contains("latency"))
+        .position(|h| {
+            h == "delay"
+                || h.contains("delay")
+                || h.contains("latency")
+                || h.contains("ping")
+                || h.contains("rtt")
+        })
         .unwrap_or(usize::MAX);
 
     let mut download_indices: Vec<usize> = headers
@@ -184,7 +198,7 @@ fn parse_csv_results(path: &str) -> Vec<TestResult> {
 
     let mut out = Vec::new();
     for line in lines {
-        let cols = split_csv_line(line);
+        let cols = split_csv_line_with_delimiter(line, detect_csv_delimiter(header_line));
         if link_idx >= cols.len() {
             continue;
         }
@@ -231,7 +245,21 @@ fn parse_csv_results(path: &str) -> Vec<TestResult> {
     out
 }
 
-fn split_csv_line(line: &str) -> Vec<String> {
+fn detect_csv_delimiter(line: &str) -> char {
+    let commas = line.matches(',').count();
+    let semis = line.matches(';').count();
+    if semis > commas {
+        ';'
+    } else {
+        ','
+    }
+}
+
+fn split_csv_line_auto(line: &str) -> Vec<String> {
+    split_csv_line_with_delimiter(line, detect_csv_delimiter(line))
+}
+
+fn split_csv_line_with_delimiter(line: &str, delimiter: char) -> Vec<String> {
     let mut cols = Vec::new();
     let mut current = String::new();
     let mut in_quotes = false;
@@ -247,7 +275,7 @@ fn split_csv_line(line: &str) -> Vec<String> {
                     in_quotes = !in_quotes;
                 }
             }
-            ',' if !in_quotes => {
+            _ if ch == delimiter && !in_quotes => {
                 cols.push(current.clone());
                 current.clear();
             }
@@ -404,8 +432,32 @@ pub fn filter_working_configs(
         }
 
         ping_selected = parse_csv_results(&ping_csv);
-        ping_selected.retain(|r| r.delay_ms.is_some());
-        ping_selected.sort_by_key(|r| r.delay_ms.unwrap_or(u128::MAX));
+        let parsed_rows = ping_selected.len();
+        let with_delay = ping_selected
+            .iter()
+            .filter(|r| r.delay_ms.is_some())
+            .count();
+
+        log_worker(
+            &tx,
+            LogLevel::Info,
+            format!(
+                "🧾 Phase2/PING csv rows={} | with_delay_metric={}",
+                parsed_rows, with_delay
+            ),
+        );
+
+        if with_delay > 0 {
+            ping_selected.retain(|r| r.delay_ms.is_some());
+            ping_selected.sort_by_key(|r| r.delay_ms.unwrap_or(u128::MAX));
+        } else {
+            log_worker(
+                &tx,
+                LogLevel::Warning,
+                "⚠️ Phase2/PING csv had no explicit delay metric. Falling back to accept parsed rows as ping-pass candidates.".to_string(),
+            );
+        }
+
         phase2.ping_passed_mixed = ping_selected.iter().map(|r| r.link.clone()).collect();
         let _ = fs::remove_file(&ping_csv);
 
