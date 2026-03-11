@@ -1,10 +1,15 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
+use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
+use std::thread;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
+
+use base64::{engine::general_purpose::STANDARD as B64, Engine};
+use serde_json::Value;
 
 use crate::config::TesterConfig;
 use crate::scraper::{log_worker, AppEvent, LogLevel};
@@ -27,17 +32,15 @@ pub struct Phase2Result {
     pub speed_passed_mixed: BTreeSet<String>,
 }
 
-fn country_to_flag(code: &str) -> &'static str {
-    match code.to_ascii_uppercase().as_str() {
-        "IR" => "🇮🇷",
-        "US" => "🇺🇸",
-        "DE" => "🇩🇪",
-        "NL" => "🇳🇱",
-        "FR" => "🇫🇷",
-        "GB" => "🇬🇧",
-        "TR" => "🇹🇷",
-        "AE" => "🇦🇪",
-        _ => "🌐",
+/// تبدیل کد دو حرفی کشور به ایموجی پرچم (بر اساس استاندارد یونیکد)
+fn get_flag(cc: &str) -> String {
+    let cc = cc.trim().to_uppercase();
+    if cc.len() == 2 && cc.chars().all(|c| c.is_ascii_alphabetic()) {
+        cc.chars()
+            .map(|c| std::char::from_u32(127397 + c as u32).unwrap_or('🌐'))
+            .collect()
+    } else {
+        "🌐".to_string()
     }
 }
 
@@ -45,54 +48,126 @@ fn format_speed(download_kb: f64) -> String {
     if download_kb >= 1024.0 {
         format!("{:.1}MB", download_kb / 1024.0)
     } else {
-        format!("{:.1}KB", download_kb.max(0.1))
+        format!("{:.0}KB", download_kb.max(0.1))
     }
 }
 
-fn append_labels_to_config(
-    config_str: &str,
+/// انکود کردن متن برای قرارگیری در URL (مانند Remark کانفیگ‌ها)
+fn percent_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() * 3);
+    for byte in s.bytes() {
+        match byte {
+            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                out.push(byte as char);
+            }
+            _ => {
+                out.push_str(&format!("%{:02X}", byte));
+            }
+        }
+    }
+    out
+}
+
+/// دیکود کردن متن URL
+fn percent_decode(s: &str) -> String {
+    let mut out = String::new();
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '%' {
+            let mut hex = String::new();
+            if let Some(h1) = chars.next() { hex.push(h1); }
+            if let Some(h2) = chars.next() { hex.push(h2); }
+            if let Ok(byte) = u8::from_str_radix(&hex, 16) {
+                out.push(byte as char);
+            } else {
+                out.push('%');
+                out.push_str(&hex);
+            }
+        } else if c == '+' {
+            out.push(' ');
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// تغییر نام هوشمند کانفیگ‌ها با رعایت ساختار JSON در vmess و URL Encoding در بقیه
+fn rename_config(
+    link: &str,
     tester_cfg: &TesterConfig,
     result: &TestResult,
+    rank: Option<usize>,
 ) -> String {
-    let mut labels = Vec::new();
+    let mut parts = Vec::new();
 
+    let cc = result.country.as_deref().unwrap_or("UN");
     if tester_cfg.append_country_flag {
-        let cc = result.country.as_deref().unwrap_or("UN");
-        labels.push(country_to_flag(cc).to_string());
+        parts.push(get_flag(cc));
+        parts.push(cc.to_string());
     }
 
     if tester_cfg.append_ping_flag {
         if let Some(ping) = result.delay_ms {
-            labels.push(format!("Ping:{}ms", ping));
+            parts.push(format!("{}ms", ping));
+        } else {
+            parts.push("?ms".to_string());
         }
     }
 
     if tester_cfg.append_speed_flag {
-        if let Some(download) = result.download_kb {
-            if download > 0.0 {
-                labels.push(format!("Speed:{}", format_speed(download)));
+        if let Some(dl) = result.download_kb {
+            if dl > 0.0 {
+                parts.push(format_speed(dl));
+            } else {
+                parts.push("Low".to_string());
             }
         }
     }
 
-    if labels.is_empty() {
-        return config_str.to_string();
+    if parts.is_empty() && rank.is_none() {
+        return link.to_string();
     }
 
-    let suffix = format!("[{}]", labels.join(" | "));
-    if config_str.rfind('#').is_some() {
-        format!("{}-{}", config_str, suffix)
-    } else {
-        format!("{}#{}", config_str, suffix)
+    let prefix = rank.map(|r| format!("[{}] ", r)).unwrap_or_default();
+    let tag = format!("{}{}", prefix, parts.join(" | "));
+    let tag_with_sep = if tag.is_empty() { String::new() } else { format!("{} | ", tag) };
+
+    // پردازش امن vmess (بر اساس Base64 و JSON)
+    if link.starts_with("vmess://") {
+        if let Some(base64_part) = link.strip_prefix("vmess://") {
+            if let Ok(decoded) = B64.decode(base64_part) {
+                if let Ok(mut json) = serde_json::from_slice::<Value>(&decoded) {
+                    if let Some(obj) = json.as_object_mut() {
+                        let old_ps = obj.get("ps").and_then(|v| v.as_str()).unwrap_or("Server");
+                        obj.insert("ps".to_string(), Value::String(format!("{}{}", tag_with_sep, old_ps)));
+                        let new_json = serde_json::to_string(&obj).unwrap_or_default();
+                        return format!("vmess://{}", B64.encode(new_json.as_bytes()));
+                    }
+                }
+            }
+        }
+        return link.to_string(); // در صورت خطای پارس، لینک اصلی بازگردانده می‌شود
     }
+
+    // پردازش سایر پروتکل‌ها (VLESS, Trojan, SS و ...)
+    let mut parts_iter = link.splitn(2, '#');
+    let base = parts_iter.next().unwrap_or(link);
+    let old_remark = parts_iter.next().unwrap_or("Server");
+    
+    let decoded_old = percent_decode(old_remark);
+    let new_remark = format!("{}{}", tag_with_sep, decoded_old);
+    
+    format!("{}#{}", base, percent_encode(&new_remark))
 }
 
-fn run_xray_knife(tester_cfg: &TesterConfig, args: &[String]) -> bool {
+/// اجرای موتور xray-knife با قابلیت پایپ کردن زنده لاگ‌ها به رابط کاربری نرم افزار
+fn run_xray_knife(tester_cfg: &TesterConfig, args: &[String], tx: &Sender<AppEvent>) -> bool {
     let mut command = Command::new(&tester_cfg.xray_knife_path);
     command
         .args(args)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .stdin(Stdio::null())
         .env_remove("HTTP_PROXY")
         .env_remove("HTTPS_PROXY")
@@ -105,7 +180,53 @@ fn run_xray_knife(tester_cfg: &TesterConfig, args: &[String]) -> bool {
         command.creation_flags(CREATE_NO_WINDOW);
     }
 
-    command.status().map(|s| s.success()).unwrap_or(false)
+    match command.spawn() {
+        Ok(mut child) => {
+            // شنود زنده خروجی استاندارد (Stdout) در یک Thread مجزا
+            if let Some(stdout) = child.stdout.take() {
+                let tx_clone = tx.clone();
+                thread::spawn(move || {
+                    let reader = BufReader::new(stdout);
+                    for line in reader.lines().filter_map(Result::ok) {
+                        let cleaned = line.trim().replace('\u{FEFF}', "");
+                        if !cleaned.is_empty() {
+                            let _ = tx_clone.send(AppEvent::Log(
+                                LogLevel::Debug,
+                                format!("🔪 {}", cleaned),
+                            ));
+                        }
+                    }
+                });
+            }
+
+            // شنود زنده خطاهای هسته (Stderr)
+            if let Some(stderr) = child.stderr.take() {
+                let tx_clone = tx.clone();
+                thread::spawn(move || {
+                    let reader = BufReader::new(stderr);
+                    for line in reader.lines().filter_map(Result::ok) {
+                        let cleaned = line.trim().replace('\u{FEFF}', "");
+                        if !cleaned.is_empty() {
+                            let _ = tx_clone.send(AppEvent::Log(
+                                LogLevel::Warning,
+                                format!("🔪 {}", cleaned),
+                            ));
+                        }
+                    }
+                });
+            }
+
+            // مسدود شدن تا پایان کار هسته xray-knife
+            child.wait().map(|s| s.success()).unwrap_or(false)
+        }
+        Err(e) => {
+            let _ = tx.send(AppEvent::Log(
+                LogLevel::Error,
+                format!("❌ Failed to start xray-knife process: {}", e),
+            ));
+            false
+        }
+    }
 }
 
 fn append_extra_args(args: &mut Vec<String>, extra: &str) {
@@ -129,9 +250,9 @@ fn build_temp_path(file_name: &str) -> String {
 }
 
 fn parse_csv_results(path: &str) -> Vec<TestResult> {
-    let Ok(raw) = fs::read_to_string(path) else {
-        return Vec::new();
-    };
+    let raw_content = fs::read_to_string(path).unwrap_or_default();
+    // حدف کاراکتر BOM در صورت وجود
+    let raw = raw_content.strip_prefix('\u{FEFF}').unwrap_or(&raw_content);
 
     let mut lines = raw.lines();
     let Some(header_line) = lines.next() else {
@@ -155,6 +276,7 @@ fn parse_csv_results(path: &str) -> Vec<TestResult> {
                 || h.contains("config")
         })
         .unwrap_or(0);
+        
     let delay_idx = headers
         .iter()
         .position(|h| {
@@ -191,6 +313,7 @@ fn parse_csv_results(path: &str) -> Vec<TestResult> {
             download_indices.push(idx);
         }
     }
+    
     let location_idx = headers
         .iter()
         .position(|h| h == "location" || h == "cc")
@@ -420,7 +543,9 @@ pub fn filter_working_configs(
                 tester_cfg.ping_test_url, total, tester_cfg.timeout_secs
             ),
         );
-        if !run_xray_knife(tester_cfg, &args) {
+        
+        // فراخوانی ابزار همراه با فرستادن tx برای نمایش زنده لاگ‌ها
+        if !run_xray_knife(tester_cfg, &args, &tx) {
             log_worker(
                 &tx,
                 LogLevel::Error,
@@ -508,6 +633,8 @@ pub fn filter_working_configs(
         return phase2;
     }
 
+    let mut use_rank = false;
+
     if tester_cfg.speed_test_enabled {
         let speed_started = Instant::now();
         let speed_input = build_temp_path("speed_candidates.txt");
@@ -582,7 +709,7 @@ pub fn filter_working_configs(
             speed_csv.clone(),
             "-x".to_string(),
             "csv".to_string(),
-            "-p".to_string(),
+            "-p".to_string(), 
             "-u".to_string(),
             speed_url.clone(),
             "-a".to_string(),
@@ -595,7 +722,9 @@ pub fn filter_working_configs(
             LogLevel::Info,
             format!("🚀 Phase2/SPEED start -> {}", speed_url),
         );
-        if run_xray_knife(tester_cfg, &args) {
+        
+        // فراخوانی ابزار همراه با فرستادن tx برای نمایش زنده لاگ‌ها
+        if run_xray_knife(tester_cfg, &args, &tx) {
             let mut speed_results = parse_csv_results(&speed_csv);
             let parsed_with_speed = speed_results
                 .iter()
@@ -610,7 +739,10 @@ pub fn filter_working_configs(
                     parsed_with_speed
                 ),
             );
+            
             speed_results.retain(|item| item.download_kb.unwrap_or(0.0) > 0.0);
+            speed_results.sort_by(|a, b| b.download_kb.unwrap_or(0.0).partial_cmp(&a.download_kb.unwrap_or(0.0)).unwrap_or(std::cmp::Ordering::Equal));
+            
             phase2.speed_passed_mixed = speed_results.iter().map(|r| r.link.clone()).collect();
             if speed_results.is_empty() {
                 log_worker(
@@ -621,6 +753,7 @@ pub fn filter_working_configs(
                 final_selected.clear();
             } else {
                 final_selected = speed_results;
+                use_rank = true;
             }
         } else {
             log_worker(
@@ -668,12 +801,14 @@ pub fn filter_working_configs(
     }
 
     let mut passed_count = 0usize;
-    for item in final_selected {
+    for (index, item) in final_selected.into_iter().enumerate() {
         let Some(proto) = proto_by_link.get(&item.link) else {
             continue;
         };
 
-        let final_config = append_labels_to_config(&item.link, tester_cfg, &item);
+        let rank = if use_rank { Some(index + 1) } else { None };
+        let final_config = rename_config(&item.link, tester_cfg, &item, rank);
+        
         configs_map
             .entry(proto.clone())
             .or_default()
