@@ -40,9 +40,6 @@ pub struct ProtocolRule {
     pub max_count: usize, // 0 یعنی نامحدود
 }
 
-// -------------------------------------------------------------
-// تنظیمات پیشرفته فاز دوم: تستر Xray-Knife و سنجش سرعت
-// -------------------------------------------------------------
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TesterConfig {
@@ -50,23 +47,20 @@ pub struct TesterConfig {
     pub concurrent_tests: usize,
     pub timeout_secs: u64,
     pub test_url: String,
-    
-    // قابلیت‌های جدید بر اساس امکانات ابزار
-    pub speed_test_enabled: bool,    // فعال‌سازی دانلود واقعی برای تست سرعت
-    pub append_ping_flag: bool,      // اضافه کردن [Ping: XXms] به اسم کانفیگ
-    
+    pub speed_test_enabled: bool,
+    pub append_ping_flag: bool,
     pub xray_knife_path: String,
 }
 
 impl Default for TesterConfig {
     fn default() -> Self {
         Self {
-            enabled: true,                // تستر به صورت پیش‌فرض روشن
-            concurrent_tests: 10,         // 10 تست همزمان
-            timeout_secs: 6,              // 6 ثانیه مهلت برای پاسخ
-            test_url: "https://t.me/vpnclashfa/1228".to_string(), // لینک پیش‌فرض تست دانلود
-            speed_test_enabled: true,     // تست سرعت/دانلود پیش‌فرض روشن است
-            append_ping_flag: false,      // افزودن پینگ به نام کانفیگ پیش‌فرض خاموش است
+            enabled: true,
+            concurrent_tests: 10,
+            timeout_secs: 6,
+            test_url: "https://t.me/vpnclashfa/1228".to_string(),
+            speed_test_enabled: true,
+            append_ping_flag: false,
             xray_knife_path: if cfg!(windows) {
                 "xray-knife.exe".to_string()
             } else {
@@ -94,6 +88,7 @@ pub struct AppConfig {
     pub output_directory: String,
     pub output_new_only_enabled: bool,
     pub output_append_unique_enabled: bool,
+    pub app_update_repo: String, // جایگزین شدن لینک مستقیم با نام مخزن گیت‌هاب
     pub protocol_rules: BTreeMap<String, ProtocolRule>,
     pub tester: TesterConfig,
 }
@@ -126,6 +121,7 @@ impl Default for AppConfig {
             output_directory: "output".to_string(),
             output_new_only_enabled: true,
             output_append_unique_enabled: true,
+            app_update_repo: "10ium/ConfigCollectorWindows".to_string(),
             protocol_rules,
             tester: TesterConfig::default(),
         }
@@ -136,7 +132,6 @@ impl AppConfig {
     pub fn load_or_create() -> Self {
         if let Ok(raw) = fs::read_to_string(APP_CONFIG_PATH) {
             if let Ok(mut cfg) = toml::from_str::<Self>(&raw) {
-                // اطمینان از وجود تمام پروتکل‌ها در تنظیمات بارگذاری شده
                 for p in DEFAULT_PROTOCOLS {
                     cfg.protocol_rules
                         .entry(p.to_string())
