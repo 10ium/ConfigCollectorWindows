@@ -87,7 +87,11 @@ fn run_xray_knife(tester_cfg: &TesterConfig, args: &[String]) -> bool {
         .args(args)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .stdin(Stdio::null());
+        .stdin(Stdio::null())
+        .env_remove("HTTP_PROXY")
+        .env_remove("HTTPS_PROXY")
+        .env_remove("ALL_PROXY")
+        .env("NO_PROXY", "*");
 
     #[cfg(windows)]
     {
@@ -262,11 +266,7 @@ pub fn filter_working_configs(
     let mut selected = if tester_cfg.ping_test_enabled {
         let ping_csv = build_temp_path("ping_test_results.csv");
         let timeout_ms = (tester_cfg.timeout_secs.max(1) * 1000).to_string();
-        let ping_url = if tester_cfg.ping_test_url.trim().is_empty() {
-            tester_cfg.test_url.clone()
-        } else {
-            tester_cfg.ping_test_url.clone()
-        };
+        let ping_url = tester_cfg.ping_test_url.clone();
 
         let args = vec![
             "http".to_string(),
