@@ -69,26 +69,38 @@ pub struct ProtocolRule {
 pub struct TesterConfig {
     pub enabled: bool,
     pub concurrent_tests: usize,
-    pub timeout_secs: u64,
+    
+    // پارامترهای جدید و اصلاح شده برای هسته xray-knife
+    pub core_type: String,       // -z, --core (auto, singbox, xray)
+    pub max_delay_ms: u32,       // -d, --mdelay
+    pub retries: u16,            // --retries
+    pub resolve_real_ip: bool,   // -r, --rip
+    
+    pub timeout_secs: u64,       // --timeout
     pub test_url: String,
+    
     pub ping_test_enabled: bool,
     pub ping_test_url: String,
     pub ping_url_preset: u8,
+    
     pub speed_test_enabled: bool,
     pub speed_test_url: String,
     pub speed_url_preset: u8,
     pub speed_url_supports_bytes_query: bool,
-    pub speed_test_download_bytes: u64,
+    
+    pub speed_test_amount_kb: u32, // -a, --amount (حجم دانلود و آپلود به کیلوبایت)
     pub speed_test_top_count: usize,
     pub speed_test_batch_size: usize,
-    pub speed_test_timeout_secs: u64,
+    pub speed_test_timeout_secs: u64, // --timeout برای سرعت
+    
     pub append_ping_flag: bool,
     pub append_speed_flag: bool,
     pub append_country_flag: bool,
     pub speed_test_from_ping_passed_only: bool,
+    
     pub extra_xray_args: String,
     pub xray_knife_path: String,
-    pub allow_insecure: bool, // متغیر جدید اضافه شده برای Insecure TLS
+    pub allow_insecure: bool,    // -e, --insecure
 }
 
 impl Default for TesterConfig {
@@ -96,30 +108,42 @@ impl Default for TesterConfig {
         Self {
             enabled: true,
             concurrent_tests: 10,
+            
+            // مقادیر پیش‌فرض جدید
+            core_type: "auto".to_string(),
+            max_delay_ms: 5000,
+            retries: 0,
+            resolve_real_ip: true,
+            
             timeout_secs: 6,
             test_url: "https://telegram.org/".to_string(),
+            
             ping_test_enabled: false,
             ping_test_url: "https://telegram.org/favicon.ico".to_string(),
             ping_url_preset: 1,
+            
             speed_test_enabled: true,
-            speed_test_url: "https://telegram.org/js/telegram-web-app.js".to_string(),
-            speed_url_preset: 1,
-            speed_url_supports_bytes_query: false,
-            speed_test_download_bytes: 5_000_000,
+            speed_test_url: "https://speed.cloudflare.com/__down".to_string(),
+            speed_url_preset: 0,
+            speed_url_supports_bytes_query: true,
+            
+            speed_test_amount_kb: 5000, // 5 مگابایت پیش‌فرض
             speed_test_top_count: 300,
             speed_test_batch_size: 10,
-            speed_test_timeout_secs: 6,
-            append_ping_flag: false,
-            append_speed_flag: false,
-            append_country_flag: false,
+            speed_test_timeout_secs: 10,
+            
+            append_ping_flag: true,
+            append_speed_flag: true,
+            append_country_flag: true,
             speed_test_from_ping_passed_only: false,
+            
             extra_xray_args: "".to_string(),
             xray_knife_path: if cfg!(windows) {
                 "xray-knife.exe".to_string()
             } else {
                 "xray-knife".to_string()
             },
-            allow_insecure: true, // بصورت پیش‌فرض برای کانفیگ‌های رایگان فعال است
+            allow_insecure: true,
         }
     }
 }
