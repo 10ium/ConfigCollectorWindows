@@ -327,7 +327,7 @@ impl eframe::App for AppState {
             });
 
         egui::SidePanel::left("sidebar")
-            .default_width(360.0)
+            .default_width(370.0)
             .frame(
                 egui::Frame::default()
                     .fill(egui::Color32::from_rgb(18, 20, 30))
@@ -520,9 +520,7 @@ impl eframe::App for AppState {
                         }
                         3 => {
                             ui.heading(egui::RichText::new("🔬 Phase 2 Tester Engine").color(egui::Color32::LIGHT_BLUE));
-                            ui.label(egui::RichText::new("Validates scraped configs via xray-knife in DIRECT mode (without app proxy).
-You can choose preset endpoints or enter custom URLs.
-For speed test on Telegram links, keep bytes-query disabled.").small().color(egui::Color32::GRAY));
+                            ui.label(egui::RichText::new("Advanced validation powered by xray-knife in DIRECT mode.").small().color(egui::Color32::GRAY));
                             ui.add_space(10.0);
 
                             ui.checkbox(&mut self.config.tester.enabled, "Enable Xray-Knife Tester");
@@ -532,18 +530,41 @@ For speed test on Telegram links, keep bytes-query disabled.").small().color(egu
                                 .rounding(6.0)
                                 .inner_margin(10.0)
                                 .show(ui, |ui| {
+                                    // --- General Tester Settings ---
+                                    ui.horizontal(|ui| {
+                                        ui.label("Core Type:");
+                                        egui::ComboBox::from_id_salt("core_type")
+                                            .selected_text(&self.config.tester.core_type)
+                                            .show_ui(ui, |ui| {
+                                                ui.selectable_value(&mut self.config.tester.core_type, "auto".to_string(), "auto");
+                                                ui.selectable_value(&mut self.config.tester.core_type, "xray".to_string(), "xray");
+                                                ui.selectable_value(&mut self.config.tester.core_type, "singbox".to_string(), "singbox");
+                                            });
+                                    });
+
                                     ui.horizontal(|ui| {
                                         ui.label("Concurrent Tests:");
                                         ui.add(egui::DragValue::new(&mut self.config.tester.concurrent_tests).range(1..=100));
+                                        ui.label("Timeout (s):").on_hover_text("Global timeout parameter (--timeout)");
+                                        ui.add(egui::DragValue::new(&mut self.config.tester.timeout_secs).range(1..=60));
                                     });
+
                                     ui.horizontal(|ui| {
-                                        ui.label("Timeout (secs):");
-                                        ui.add(egui::DragValue::new(&mut self.config.tester.timeout_secs).range(1..=30));
+                                        ui.label("Max Delay (ms):").on_hover_text("Maximum allowed delay (-d, --mdelay)");
+                                        ui.add(egui::DragValue::new(&mut self.config.tester.max_delay_ms).range(100..=30000));
+                                        ui.label("Retries:").on_hover_text("Number of retries for failed configs (--retries)");
+                                        ui.add(egui::DragValue::new(&mut self.config.tester.retries).range(0..=10));
                                     });
+
+                                    ui.checkbox(&mut self.config.tester.resolve_real_ip, "Resolve Real IP/Location (--rip)");
+                                    ui.checkbox(&mut self.config.tester.allow_insecure, "Allow Insecure TLS (--insecure)")
+                                        .on_hover_text("Bypasses invalid SSL certificates. Crucial for finding free/leaked Telegram configs.");
+
                                     ui.add_space(5.0);
                                     ui.separator();
                                     ui.add_space(5.0);
 
+                                    // --- Ping Settings ---
                                     ui.checkbox(&mut self.config.tester.ping_test_enabled, "Enable Ping Test");
                                     ui.horizontal(|ui| {
                                         ui.label("Ping URL:");
@@ -572,6 +593,7 @@ For speed test on Telegram links, keep bytes-query disabled.").small().color(egu
                                     ui.separator();
                                     ui.add_space(5.0);
 
+                                    // --- Speed Test Settings ---
                                     ui.checkbox(&mut self.config.tester.speed_test_enabled, "Enable Speed Test (Download bytes)");
                                     ui.checkbox(&mut self.config.tester.speed_test_from_ping_passed_only, "Chain Mode: Speed test only from ping-passed configs");
                                     ui.horizontal(|ui| {
@@ -597,34 +619,35 @@ For speed test on Telegram links, keep bytes-query disabled.").small().color(egu
                                             });
                                     });
                                     ui.checkbox(&mut self.config.tester.speed_url_supports_bytes_query, "Append bytes query to Speed URL ({bytes} supported)");
+                                    
                                     ui.horizontal(|ui| {
-                                        ui.label("Speed Bytes:");
-                                        ui.add(egui::DragValue::new(&mut self.config.tester.speed_test_download_bytes).range(1024..=200_000_000));
+                                        ui.label("Speed Amount (KB):").on_hover_text("Download/Upload amount per test (-a, --amount)");
+                                        ui.add(egui::DragValue::new(&mut self.config.tester.speed_test_amount_kb).range(10..=200_000));
                                     });
+                                    
                                     ui.horizontal(|ui| {
-                                        ui.label("Speed Batch Size:");
+                                        ui.label("Batch Size:");
                                         ui.add(egui::DragValue::new(&mut self.config.tester.speed_test_batch_size).range(1..=100));
+                                        ui.label("Timeout (s):");
+                                        ui.add(egui::DragValue::new(&mut self.config.tester.speed_test_timeout_secs).range(1..=60));
                                     });
-                                    ui.horizontal(|ui| {
-                                        ui.label("Speed Timeout (secs):");
-                                        ui.add(egui::DragValue::new(&mut self.config.tester.speed_test_timeout_secs).range(1..=30));
-                                    });
+                                    
                                     ui.horizontal(|ui| {
                                         ui.label("Top by Ping for Speed:");
                                         ui.add(egui::DragValue::new(&mut self.config.tester.speed_test_top_count).range(1..=10_000));
                                     });
                                     
                                     ui.add_space(5.0);
-                                    
-                                    // --- چک‌باکس جدید Insecure ---
-                                    ui.checkbox(&mut self.config.tester.allow_insecure, "Allow Insecure TLS (--insecure)")
-                                        .on_hover_text("Bypasses invalid SSL certificates. Crucial for finding free/leaked Telegram configs.");
-                                        
+                                    ui.separator();
+                                    ui.add_space(5.0);
+
+                                    // --- Appending Tags & Extra Args ---
                                     ui.horizontal(|ui| {
-                                        ui.label("Extra xray-knife args:");
+                                        ui.label("Extra args:");
                                         ui.text_edit_singleline(&mut self.config.tester.extra_xray_args)
-                                            .on_hover_text("Any extra flags supported by xray-knife http (advanced). Example: --xfdb");
+                                            .on_hover_text("Any extra flags supported by xray-knife http (e.g. -v, --interval 1500)");
                                     });
+                                    
                                     ui.checkbox(&mut self.config.tester.append_ping_flag, "Append Ping to Config Name");
                                     ui.checkbox(&mut self.config.tester.append_speed_flag, "Append Download Speed to Config Name");
                                     ui.checkbox(&mut self.config.tester.append_country_flag, "Append Country Flag Emoji to Config Name");
