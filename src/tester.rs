@@ -135,7 +135,6 @@ fn rename_config(
                 if let Ok(mut json) = serde_json::from_slice::<Value>(&decoded) {
                     if let Some(obj) = json.as_object_mut() {
                         let old_ps = obj.get("ps").and_then(|v| v.as_str()).unwrap_or("Server");
-                        // قرار دادن تگ‌ها دقیقاً در اول اسم (Prefix)
                         obj.insert("ps".to_string(), Value::String(format!("{}{}", tag_with_sep, old_ps)));
                         let new_json = serde_json::to_string(&obj).unwrap_or_default();
                         return format!("vmess://{}", B64.encode(new_json.as_bytes()));
@@ -151,7 +150,6 @@ fn rename_config(
     let old_remark = parts_iter.next().unwrap_or("Server");
     
     let decoded_old = percent_decode(old_remark);
-    // قرار دادن تگ‌ها دقیقاً در اول اسم (Prefix)
     let new_remark = format!("{}{}", tag_with_sep, decoded_old);
     
     format!("{}#{}", base, percent_encode(&new_remark))
@@ -301,8 +299,14 @@ fn build_temp_path(file_name: &str) -> String {
 
 fn parse_delay(raw: &str) -> Option<u128> {
     let s = raw.trim().to_lowercase();
+    if s.is_empty() || s == "0" || s == "-1" || s.contains("err") || s.contains("time") || s.contains("fail") || s.contains("exceed") || s.contains("deadline") {
+        return None;
+    }
+    
     let just_numbers: String = s.chars().filter(|c| c.is_ascii_digit()).collect();
-    if just_numbers.is_empty() { return None; }
+    if just_numbers.is_empty() || s.len() > just_numbers.len() + 5 { 
+        return None; 
+    }
     
     let val = just_numbers.parse::<u128>().ok()?;
     if val > 0 && val < 30000 { Some(val) } else { None }
@@ -310,9 +314,15 @@ fn parse_delay(raw: &str) -> Option<u128> {
 
 fn parse_speed(raw: &str) -> Option<f64> {
     let s = raw.trim().to_lowercase();
+    if s.is_empty() || s == "0" || s == "-1" || s.contains("err") || s.contains("time") || s.contains("fail") || s.contains("exceed") || s.contains("deadline") {
+        return None;
+    }
+    
     let cleaned = s.replace(',', "");
     let numeric: String = cleaned.chars().filter(|c| c.is_ascii_digit() || *c == '.').collect();
-    if numeric.is_empty() { return None; }
+    if numeric.is_empty() || cleaned.len() > numeric.len() + 10 { 
+        return None; 
+    }
     
     let mut value = numeric.parse::<f64>().ok()?;
     
@@ -479,8 +489,8 @@ pub fn filter_working_configs(
         &tx,
         LogLevel::Info,
         format!(
-            "🔬 PHASE 2 START | total={} | ping={} | speed={} | chain_ping_to_speed={}",
-            total, tester_cfg.ping_test_enabled, tester_cfg.speed_test_enabled, tester_cfg.speed_test_from_ping_passed_only
+            "🔬 PHASE 2 START | total={} | core={} | mdelay={}ms | retries={}",
+            total, tester_cfg.core_type, tester_cfg.max_delay_ms, tester_cfg.retries
         ),
     );
 
@@ -508,12 +518,22 @@ pub fn filter_working_configs(
             "-o".to_string(), ping_csv.clone(),
             "-x".to_string(), "csv".to_string(),
             "-u".to_string(), tester_cfg.ping_test_url.clone(),
-            "-a".to_string(), timeout_ms,
+            
+            // پارامترهای جدید کشف شده
+            "-z".to_string(), tester_cfg.core_type.clone(),
+            "-d".to_string(), tester_cfg.max_delay_ms.to_string(),
+            "--retries".to_string(), tester_cfg.retries.to_string(),
+            "--timeout".to_string(), timeout_ms,
         ];
         
-        // اعمال فلگ insecure در صورت فعال بودن تیک در UI
         if tester_cfg.allow_insecure {
             args.push("--insecure".to_string());
+        }
+        
+        if tester_cfg.resolve_real_ip {
+            args.push("--rip=true".to_string());
+        } else {
+            args.push("--rip=false".to_string());
         }
         
         append_extra_args(&mut args, &tester_cfg.extra_xray_args);
@@ -583,9 +603,10 @@ pub fn filter_working_configs(
                 &tx,
                 LogLevel::Info,
                 format!(
-                    "📦 Phase2/SPEED targets={} | source={} | remaining_after_speed=depends_on_results",
+                    "📦 Phase2/SPEED targets={} | source={} | amount={}KB",
                     speed_targets.len(),
-                    if tester_cfg.speed_test_from_ping_passed_only && tester_cfg.ping_test_enabled { "ping-passed" } else { "all-phase1" }
+                    if tester_cfg.speed_test_from_ping_passed_only && tester_cfg.ping_test_enabled { "ping-passed" } else { "all-phase1" },
+                    tester_cfg.speed_test_amount_kb
                 ),
             );
 
@@ -596,15 +617,19 @@ pub fn filter_working_configs(
             }
 
             let speed_url = if tester_cfg.speed_url_supports_bytes_query && tester_cfg.speed_test_download_bytes > 0 {
+                // اینجا به جای استفاده از متغیر منسوخ شده، از عدد amount استفاده می‌کنیم برای ساخت کوئری
+                let bytes_val = tester_cfg.speed_test_amount_kb * 1024;
                 if tester_cfg.speed_test_url.contains("{bytes}") {
-                    tester_cfg.speed_test_url.replace("{bytes}", &tester_cfg.speed_test_download_bytes.to_string())
+                    tester_cfg.speed_test_url.replace("{bytes}", &bytes_val.to_string())
                 } else {
                     let separator = if tester_cfg.speed_test_url.contains('?') { "&" } else { "?" };
-                    format!("{}{}{}bytes={}", tester_cfg.speed_test_url, separator, tester_cfg.speed_test_download_bytes, "")
+                    format!("{}{}{}bytes={}", tester_cfg.speed_test_url, separator, bytes_val, "")
                 }
             } else {
                 tester_cfg.speed_test_url.clone()
             };
+
+            let speed_timeout_ms = (tester_cfg.speed_test_timeout_secs.max(1) * 1000).to_string();
 
             let mut args = vec![
                 "http".to_string(),
@@ -614,12 +639,23 @@ pub fn filter_working_configs(
                 "-x".to_string(), "csv".to_string(),
                 "-p".to_string(), 
                 "-u".to_string(), speed_url.clone(),
-                "-a".to_string(), (tester_cfg.speed_test_timeout_secs.max(1) * 1000).to_string(),
+                
+                // پارامترهای جدید و تصحیح شده
+                "-a".to_string(), tester_cfg.speed_test_amount_kb.to_string(), // رفع باگ بزرگ: اتصال حجم به -a
+                "-z".to_string(), tester_cfg.core_type.clone(),
+                "-d".to_string(), tester_cfg.max_delay_ms.to_string(),
+                "--retries".to_string(), tester_cfg.retries.to_string(),
+                "--timeout".to_string(), speed_timeout_ms,
             ];
             
-            // اعمال فلگ insecure در صورت فعال بودن تیک در UI
             if tester_cfg.allow_insecure {
                 args.push("--insecure".to_string());
+            }
+            
+            if tester_cfg.resolve_real_ip {
+                args.push("--rip=true".to_string());
+            } else {
+                args.push("--rip=false".to_string());
             }
             
             append_extra_args(&mut args, &tester_cfg.extra_xray_args);
