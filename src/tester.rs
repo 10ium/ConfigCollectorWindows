@@ -97,8 +97,8 @@ fn rename_config(
 ) -> String {
     let mut parts = Vec::new();
 
+    let cc = result.country.as_deref().unwrap_or("UN");
     if tester_cfg.append_country_flag {
-        let cc = result.country.as_deref().unwrap_or("UN");
         parts.push(get_flag(cc));
         parts.push(cc.to_string());
     }
@@ -489,8 +489,8 @@ pub fn filter_working_configs(
         &tx,
         LogLevel::Info,
         format!(
-            "🔬 PHASE 2 START | total={} | core={} | mdelay={}ms | retries={}",
-            total, tester_cfg.core_type, tester_cfg.max_delay_ms, tester_cfg.retries
+            "🔬 PHASE 2 START | total={} | ping={} | speed={} | chain_ping_to_speed={}",
+            total, tester_cfg.ping_test_enabled, tester_cfg.speed_test_enabled, tester_cfg.speed_test_from_ping_passed_only
         ),
     );
 
@@ -518,22 +518,22 @@ pub fn filter_working_configs(
             "-o".to_string(), ping_csv.clone(),
             "-x".to_string(), "csv".to_string(),
             "-u".to_string(), tester_cfg.ping_test_url.clone(),
-            
-            // پارامترهای جدید کشف شده
-            "-z".to_string(), tester_cfg.core_type.clone(),
             "-d".to_string(), tester_cfg.max_delay_ms.to_string(),
             "--retries".to_string(), tester_cfg.retries.to_string(),
             "--timeout".to_string(), timeout_ms,
         ];
         
-        if tester_cfg.allow_insecure {
-            args.push("--insecure".to_string());
+        if tester_cfg.core_type != "auto" && !tester_cfg.core_type.is_empty() {
+            args.push("-z".to_string());
+            args.push(tester_cfg.core_type.clone());
         }
-        
         if tester_cfg.resolve_real_ip {
-            args.push("--rip=true".to_string());
+            args.push("-r".to_string());
         } else {
             args.push("--rip=false".to_string());
+        }
+        if tester_cfg.allow_insecure {
+            args.push("--insecure".to_string());
         }
         
         append_extra_args(&mut args, &tester_cfg.extra_xray_args);
@@ -603,10 +603,9 @@ pub fn filter_working_configs(
                 &tx,
                 LogLevel::Info,
                 format!(
-                    "📦 Phase2/SPEED targets={} | source={} | amount={}KB",
+                    "📦 Phase2/SPEED targets={} | source={} | remaining_after_speed=depends_on_results",
                     speed_targets.len(),
-                    if tester_cfg.speed_test_from_ping_passed_only && tester_cfg.ping_test_enabled { "ping-passed" } else { "all-phase1" },
-                    tester_cfg.speed_test_amount_kb
+                    if tester_cfg.speed_test_from_ping_passed_only && tester_cfg.ping_test_enabled { "ping-passed" } else { "all-phase1" }
                 ),
             );
 
@@ -616,20 +615,17 @@ pub fn filter_working_configs(
                 return phase2;
             }
 
-            let speed_url = if tester_cfg.speed_url_supports_bytes_query && tester_cfg.speed_test_download_bytes > 0 {
-                // اینجا به جای استفاده از متغیر منسوخ شده، از عدد amount استفاده می‌کنیم برای ساخت کوئری
-                let bytes_val = tester_cfg.speed_test_amount_kb * 1024;
+            let speed_url = if tester_cfg.speed_url_supports_bytes_query && tester_cfg.speed_test_amount_kb > 0 {
+                let bytes = tester_cfg.speed_test_amount_kb * 1024;
                 if tester_cfg.speed_test_url.contains("{bytes}") {
-                    tester_cfg.speed_test_url.replace("{bytes}", &bytes_val.to_string())
+                    tester_cfg.speed_test_url.replace("{bytes}", &bytes.to_string())
                 } else {
                     let separator = if tester_cfg.speed_test_url.contains('?') { "&" } else { "?" };
-                    format!("{}{}{}bytes={}", tester_cfg.speed_test_url, separator, bytes_val, "")
+                    format!("{}{}{}bytes={}", tester_cfg.speed_test_url, separator, bytes, "")
                 }
             } else {
                 tester_cfg.speed_test_url.clone()
             };
-
-            let speed_timeout_ms = (tester_cfg.speed_test_timeout_secs.max(1) * 1000).to_string();
 
             let mut args = vec![
                 "http".to_string(),
@@ -639,23 +635,23 @@ pub fn filter_working_configs(
                 "-x".to_string(), "csv".to_string(),
                 "-p".to_string(), 
                 "-u".to_string(), speed_url.clone(),
-                
-                // پارامترهای جدید و تصحیح شده
-                "-a".to_string(), tester_cfg.speed_test_amount_kb.to_string(), // رفع باگ بزرگ: اتصال حجم به -a
-                "-z".to_string(), tester_cfg.core_type.clone(),
+                "-a".to_string(), tester_cfg.speed_test_amount_kb.to_string(),
                 "-d".to_string(), tester_cfg.max_delay_ms.to_string(),
                 "--retries".to_string(), tester_cfg.retries.to_string(),
-                "--timeout".to_string(), speed_timeout_ms,
+                "--timeout".to_string(), (tester_cfg.speed_test_timeout_secs.max(1) * 1000).to_string(),
             ];
             
-            if tester_cfg.allow_insecure {
-                args.push("--insecure".to_string());
+            if tester_cfg.core_type != "auto" && !tester_cfg.core_type.is_empty() {
+                args.push("-z".to_string());
+                args.push(tester_cfg.core_type.clone());
             }
-            
             if tester_cfg.resolve_real_ip {
-                args.push("--rip=true".to_string());
+                args.push("-r".to_string());
             } else {
                 args.push("--rip=false".to_string());
+            }
+            if tester_cfg.allow_insecure {
+                args.push("--insecure".to_string());
             }
             
             append_extra_args(&mut args, &tester_cfg.extra_xray_args);
