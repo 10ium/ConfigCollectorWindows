@@ -1,4 +1,6 @@
-use crate::config::{AppConfig, PerformanceProfile, ProxyType, CHANNELS_PATH};
+use crate::config::{
+    AppConfig, InputSourceMode, PerformanceProfile, ProxyType, CHANNELS_PATH, SUBSCRIPTIONS_PATH,
+};
 use crate::scraper::{build_client, run_worker, AppEvent, LogLevel};
 use chrono::Local;
 use eframe::egui;
@@ -21,6 +23,7 @@ pub struct LogMessage {
 pub struct AppState {
     pub config: AppConfig,
     pub channels_text: String,
+    pub subscriptions_text: String,
     pub active_tab: usize,
     pub logs: Vec<LogMessage>,
     pub total_configs: usize,
@@ -40,6 +43,7 @@ impl AppState {
             config: AppConfig::load_or_create(),
             channels_text: fs::read_to_string(CHANNELS_PATH)
                 .unwrap_or_else(|_| crate::config::DEFAULT_TARGETS.to_string()),
+            subscriptions_text: fs::read_to_string(SUBSCRIPTIONS_PATH).unwrap_or_default(),
             active_tab: 0,
             logs: vec![LogMessage {
                 time: Local::now().format("%H:%M:%S").to_string(),
@@ -143,6 +147,7 @@ impl AppState {
             let _ = fs::create_dir_all(parent);
         }
         let _ = fs::write(CHANNELS_PATH, &self.channels_text);
+        let _ = fs::write(SUBSCRIPTIONS_PATH, &self.subscriptions_text);
         if self.config.save().is_ok() {
             self.add_log(
                 LogLevel::Success,
@@ -171,10 +176,11 @@ impl AppState {
         let tx = self.event_tx.clone();
         let cfg = self.config.clone();
         let channels_raw = self.channels_text.clone();
+        let subscriptions_raw = self.subscriptions_text.clone();
         let stop_flag = self.stop_flag.clone();
 
         self.worker_handle = Some(thread::spawn(move || {
-            if let Err(err) = run_worker(cfg, channels_raw, stop_flag, tx.clone()) {
+            if let Err(err) = run_worker(cfg, channels_raw, subscriptions_raw, stop_flag, tx.clone()) {
                 let _ = tx.send(AppEvent::Log(LogLevel::Error, format!("🔥 CRASH: {}", err)));
             }
             let _ = tx.send(AppEvent::WorkerStopped);
@@ -473,12 +479,73 @@ impl eframe::App for AppState {
                             }
                         }
                         1 => {
-                            ui.heading(egui::RichText::new("📡 Target Channels").color(egui::Color32::LIGHT_BLUE));
-                            ui.label(egui::RichText::new("One ID/Link per line:").small().color(egui::Color32::GRAY));
-                            ui.add_sized(
-                                [ui.available_width(), ui.available_height() - 20.0],
-                                egui::TextEdit::multiline(&mut self.channels_text).font(egui::TextStyle::Monospace),
-                            );
+                            ui.heading(egui::RichText::new("📥 Input Source").color(egui::Color32::LIGHT_BLUE));
+                            ui.horizontal(|ui| {
+                                ui.label("Mode:");
+                                egui::ComboBox::from_id_salt("input_mode_combo")
+                                    .selected_text(match self.config.input_mode {
+                                        InputSourceMode::TelegramChannels => "Telegram channels",
+                                        InputSourceMode::SubscriptionLinks => "Subscription links",
+                                        InputSourceMode::LocalTextFolder => "Local text folder",
+                                    })
+                                    .show_ui(ui, |ui| {
+                                        ui.selectable_value(
+                                            &mut self.config.input_mode,
+                                            InputSourceMode::TelegramChannels,
+                                            "Telegram channels",
+                                        );
+                                        ui.selectable_value(
+                                            &mut self.config.input_mode,
+                                            InputSourceMode::SubscriptionLinks,
+                                            "Subscription links",
+                                        );
+                                        ui.selectable_value(
+                                            &mut self.config.input_mode,
+                                            InputSourceMode::LocalTextFolder,
+                                            "Local text folder",
+                                        );
+                                    });
+                            });
+                            ui.add_space(8.0);
+                            match self.config.input_mode {
+                                InputSourceMode::TelegramChannels => {
+                                    ui.label(
+                                        egui::RichText::new("One channel ID/Link per line:")
+                                            .small()
+                                            .color(egui::Color32::GRAY),
+                                    );
+                                    ui.add_sized(
+                                        [ui.available_width(), ui.available_height() - 60.0],
+                                        egui::TextEdit::multiline(&mut self.channels_text)
+                                            .font(egui::TextStyle::Monospace),
+                                    );
+                                }
+                                InputSourceMode::SubscriptionLinks => {
+                                    ui.label(
+                                        egui::RichText::new("One subscription URL per line:")
+                                            .small()
+                                            .color(egui::Color32::GRAY),
+                                    );
+                                    ui.add_sized(
+                                        [ui.available_width(), ui.available_height() - 60.0],
+                                        egui::TextEdit::multiline(&mut self.subscriptions_text)
+                                            .font(egui::TextStyle::Monospace),
+                                    );
+                                }
+                                InputSourceMode::LocalTextFolder => {
+                                    ui.label(
+                                        egui::RichText::new(
+                                            "Select a local folder. All text files inside it will be scanned.",
+                                        )
+                                        .small()
+                                        .color(egui::Color32::GRAY),
+                                    );
+                                    ui.horizontal(|ui| {
+                                        ui.label("Folder path:");
+                                        ui.text_edit_singleline(&mut self.config.local_text_folder);
+                                    });
+                                }
+                            }
                         }
                         2 => {
                             ui.heading(egui::RichText::new("🎯 Phase 1 Protocols Filter").color(egui::Color32::LIGHT_BLUE));

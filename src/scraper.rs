@@ -1,4 +1,4 @@
-use crate::config::{AppConfig, ChannelMemory, ProtocolRule, ProxyType, SentHistory};
+use crate::config::{AppConfig, ChannelMemory, InputSourceMode, ProtocolRule, ProxyType, SentHistory};
 use crate::converter::convert_tested_to_clash;
 use crate::sender::send_tested_new_only_to_telegram;
 use crate::storage::{
@@ -11,6 +11,7 @@ use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use regex::Regex;
 use reqwest::blocking::ClientBuilder;
 use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
@@ -114,12 +115,10 @@ pub fn apply_protocol_limits(
 pub fn run_worker(
     config: AppConfig,
     channels_raw: String,
+    subscriptions_raw: String,
     stop: Arc<AtomicBool>,
     tx: Sender<AppEvent>,
 ) -> Result<()> {
-    let channels = parse_channels(&channels_raw);
-    let total_channels_count = channels.len();
-
     let regex_pattern = r"(?i)(vmess|vless|trojan|ss|ssr|tuic|hysteria|hysteria2|hy2|juicity|snell|anytls|ssh|wireguard|wg|warp|socks|socks4|socks5|tg|dns|nm-dns|nm-vless|slipnet-enc|slipnet|slipstream|dnstt)://[a-zA-Z0-9\-\._~:/\?#\[\]@!\$&'\(\)\*\+,%;=]+";
     let regex = Regex::new(regex_pattern).unwrap();
     let date_regex = Regex::new(r#"<time datetime="([^"]+)""#).unwrap();
@@ -133,10 +132,7 @@ pub fn run_worker(
     log_worker(
         &tx,
         LogLevel::Info,
-        format!(
-            "🚀 Crawler Started | {} Channels | Threads: {}",
-            total_channels_count, config.concurrent_channels
-        ),
+        "🚀 Crawler Started.".to_string(),
     );
 
     loop {
@@ -147,35 +143,52 @@ pub fn run_worker(
         history.prune(config.lookback_days);
         let client = build_client(&config)?;
 
-        let queue = Arc::new(Mutex::new(channels.clone()));
-        let global_gathered: Arc<Mutex<BTreeMap<String, BTreeSet<String>>>> =
-            Arc::new(Mutex::new(BTreeMap::new()));
-        let total_run_configs = Arc::new(Mutex::new(0usize));
-        let completed_count = Arc::new(AtomicUsize::new(0));
-        let new_memory = Arc::new(Mutex::new(channel_memory.clone()));
+        let mut final_gathered: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        let mut total_run = 0usize;
+        let mut new_memory = channel_memory.clone();
 
-        let mut handles = vec![];
-        let threads_count = config
-            .concurrent_channels
-            .max(1)
-            .min(total_channels_count.max(1));
+        match config.input_mode {
+            InputSourceMode::TelegramChannels => {
+                let channels = parse_channels(&channels_raw);
+                let total_channels_count = channels.len();
+                log_worker(
+                    &tx,
+                    LogLevel::Info,
+                    format!(
+                        "📡 Input mode: Telegram channels | {} channels | Threads: {}",
+                        total_channels_count, config.concurrent_channels
+                    ),
+                );
 
-        for _ in 0..threads_count {
-            let q = queue.clone();
-            let client_c = client.clone();
-            let config_c = config.clone();
-            let stop_c = stop.clone();
-            let tx_c = tx.clone();
-            let gathered_c = global_gathered.clone();
-            let total_c = total_run_configs.clone();
-            let memory_c = new_memory.clone();
-            let comp_count_c = completed_count.clone();
+                let queue = Arc::new(Mutex::new(channels.clone()));
+                let global_gathered: Arc<Mutex<BTreeMap<String, BTreeSet<String>>>> =
+                    Arc::new(Mutex::new(BTreeMap::new()));
+                let total_run_configs = Arc::new(Mutex::new(0usize));
+                let completed_count = Arc::new(AtomicUsize::new(0));
+                let new_memory_arc = Arc::new(Mutex::new(channel_memory.clone()));
 
-            let reg_c = regex.clone();
-            let date_reg_c = date_regex.clone();
-            let post_id_reg_c = post_id_regex.clone();
+                let mut handles = vec![];
+                let threads_count = config
+                    .concurrent_channels
+                    .max(1)
+                    .min(total_channels_count.max(1));
 
-            handles.push(thread::spawn(move || loop {
+                for _ in 0..threads_count {
+                    let q = queue.clone();
+                    let client_c = client.clone();
+                    let config_c = config.clone();
+                    let stop_c = stop.clone();
+                    let tx_c = tx.clone();
+                    let gathered_c = global_gathered.clone();
+                    let total_c = total_run_configs.clone();
+                    let memory_c = new_memory_arc.clone();
+                    let comp_count_c = completed_count.clone();
+
+                    let reg_c = regex.clone();
+                    let date_reg_c = date_regex.clone();
+                    let post_id_reg_c = post_id_regex.clone();
+
+                    handles.push(thread::spawn(move || loop {
                 if stop_c.load(Ordering::SeqCst) {
                     break;
                 }
@@ -346,26 +359,126 @@ pub fn run_worker(
                         current_done, total_channels_count, channel, channel_configs, breakdown_str
                     ),
                 );
-            }));
-        }
+                    }));
+                }
 
-        for h in handles {
-            let _ = h.join();
-        }
-        if stop.load(Ordering::SeqCst) {
-            break;
-        }
+                for h in handles {
+                    let _ = h.join();
+                }
+                if stop.load(Ordering::SeqCst) {
+                    break;
+                }
 
-        let mut final_gathered = Arc::try_unwrap(global_gathered)
-            .unwrap()
-            .into_inner()
-            .unwrap();
-        let total_run = Arc::try_unwrap(total_run_configs)
-            .unwrap()
-            .into_inner()
-            .unwrap();
-        channel_memory = Arc::try_unwrap(new_memory).unwrap().into_inner().unwrap();
+                final_gathered = Arc::try_unwrap(global_gathered)
+                    .unwrap()
+                    .into_inner()
+                    .unwrap();
+                total_run = Arc::try_unwrap(total_run_configs)
+                    .unwrap()
+                    .into_inner()
+                    .unwrap();
+                new_memory = Arc::try_unwrap(new_memory_arc).unwrap().into_inner().unwrap();
+            }
+            InputSourceMode::SubscriptionLinks => {
+                let targets: Vec<String> = subscriptions_raw
+                    .lines()
+                    .map(str::trim)
+                    .filter(|l| !l.is_empty() && !l.starts_with('#'))
+                    .map(str::to_string)
+                    .collect();
 
+                log_worker(
+                    &tx,
+                    LogLevel::Info,
+                    format!("🔗 Input mode: Subscription links | {} links", targets.len()),
+                );
+
+                for link in targets {
+                    if stop.load(Ordering::SeqCst) {
+                        break;
+                    }
+                    match client.get(&link).send() {
+                        Ok(resp) if resp.status().is_success() => {
+                            if let Ok(raw) = resp.text() {
+                                for m in regex.find_iter(&raw) {
+                                    let clean_link = m.as_str().trim().to_string();
+                                    if let Some(proto) = clean_link.split("://").next() {
+                                        final_gathered
+                                            .entry(proto.to_lowercase())
+                                            .or_default()
+                                            .insert(clean_link);
+                                        total_run += 1;
+                                    }
+                                }
+                            }
+                        }
+                        _ => log_worker(
+                            &tx,
+                            LogLevel::Warning,
+                            format!("⚠️ Failed to fetch subscription link: {}", link),
+                        ),
+                    }
+                }
+            }
+            InputSourceMode::LocalTextFolder => {
+                let folder = config.local_text_folder.trim();
+                log_worker(
+                    &tx,
+                    LogLevel::Info,
+                    format!("📂 Input mode: Local text folder | {}", folder),
+                );
+
+                if folder.is_empty() {
+                    log_worker(
+                        &tx,
+                        LogLevel::Error,
+                        "❌ Local folder path is empty.".to_string(),
+                    );
+                } else {
+                    match fs::read_dir(folder) {
+                        Ok(entries) => {
+                            for entry in entries.flatten() {
+                                if stop.load(Ordering::SeqCst) {
+                                    break;
+                                }
+                                let path = entry.path();
+                                if !path.is_file() {
+                                    continue;
+                                }
+                                let ext = path
+                                    .extension()
+                                    .and_then(|s| s.to_str())
+                                    .unwrap_or_default()
+                                    .to_lowercase();
+                                if !["txt", "log", "conf", "yaml", "yml", "json", "csv"]
+                                    .contains(&ext.as_str())
+                                {
+                                    continue;
+                                }
+                                if let Ok(content) = fs::read_to_string(&path) {
+                                    for m in regex.find_iter(&content) {
+                                        let clean_link = m.as_str().trim().to_string();
+                                        if let Some(proto) = clean_link.split("://").next() {
+                                            final_gathered
+                                                .entry(proto.to_lowercase())
+                                                .or_default()
+                                                .insert(clean_link);
+                                            total_run += 1;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Err(e) => log_worker(
+                            &tx,
+                            LogLevel::Error,
+                            format!("❌ Could not read local folder '{}': {}", folder, e),
+                        ),
+                    }
+                }
+            }
+        }
+        channel_memory = new_memory;
         let _ = channel_memory.save();
 
         if let Some(hy2_links) = final_gathered.remove("hy2") {
