@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
-use std::io::{Read, BufReader};
+use std::io::{BufReader, Read};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
@@ -9,6 +9,7 @@ use std::thread;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
+use regex::Regex;
 use serde_json::Value;
 
 use crate::config::TesterConfig;
@@ -72,8 +73,12 @@ fn percent_decode(s: &str) -> String {
     while let Some(c) = chars.next() {
         if c == '%' {
             let mut hex = String::new();
-            if let Some(h1) = chars.next() { hex.push(h1); }
-            if let Some(h2) = chars.next() { hex.push(h2); }
+            if let Some(h1) = chars.next() {
+                hex.push(h1);
+            }
+            if let Some(h2) = chars.next() {
+                hex.push(h2);
+            }
             if let Ok(byte) = u8::from_str_radix(&hex, 16) {
                 out.push(byte as char);
             } else {
@@ -127,7 +132,11 @@ fn rename_config(
 
     let prefix = rank.map(|r| format!("[{}] ", r)).unwrap_or_default();
     let tag = format!("{}{}", prefix, parts.join(" | "));
-    let tag_with_sep = if tag.is_empty() { String::new() } else { format!("{} | ", tag) };
+    let tag_with_sep = if tag.is_empty() {
+        String::new()
+    } else {
+        format!("{} | ", tag)
+    };
 
     if link.starts_with("vmess://") {
         if let Some(base64_part) = link.strip_prefix("vmess://") {
@@ -135,7 +144,10 @@ fn rename_config(
                 if let Ok(mut json) = serde_json::from_slice::<Value>(&decoded) {
                     if let Some(obj) = json.as_object_mut() {
                         let old_ps = obj.get("ps").and_then(|v| v.as_str()).unwrap_or("Server");
-                        obj.insert("ps".to_string(), Value::String(format!("{}{}", tag_with_sep, old_ps)));
+                        obj.insert(
+                            "ps".to_string(),
+                            Value::String(format!("{}{}", tag_with_sep, old_ps)),
+                        );
                         let new_json = serde_json::to_string(&obj).unwrap_or_default();
                         return format!("vmess://{}", B64.encode(new_json.as_bytes()));
                     }
@@ -148,10 +160,10 @@ fn rename_config(
     let mut parts_iter = link.splitn(2, '#');
     let base = parts_iter.next().unwrap_or(link);
     let old_remark = parts_iter.next().unwrap_or("Server");
-    
+
     let decoded_old = percent_decode(old_remark);
     let new_remark = format!("{}{}", tag_with_sep, decoded_old);
-    
+
     format!("{}#{}", base, percent_encode(&new_remark))
 }
 
@@ -179,51 +191,109 @@ fn run_xray_knife(tester_cfg: &TesterConfig, args: &[String], tx: &Sender<AppEve
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .stdin(Stdio::null())
-        .env_remove("HTTP_PROXY").env_remove("http_proxy")
-        .env_remove("HTTPS_PROXY").env_remove("https_proxy")
-        .env_remove("ALL_PROXY").env_remove("all_proxy")
-        .env("NO_PROXY", "*").env("no_proxy", "*");
+        .env_remove("HTTP_PROXY")
+        .env_remove("http_proxy")
+        .env_remove("HTTPS_PROXY")
+        .env_remove("https_proxy")
+        .env_remove("ALL_PROXY")
+        .env_remove("all_proxy")
+        .env("NO_PROXY", "*")
+        .env("no_proxy", "*");
 
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        command.creation_flags(CREATE_NO_WINDOW);
+        if !tester_cfg.show_xray_window_on_windows {
+            command.creation_flags(CREATE_NO_WINDOW);
+        }
     }
 
     match command.spawn() {
         Ok(mut child) => {
+            let progress_step = tester_cfg.progress_log_step_percent.max(1) as i32;
             if let Some(stdout) = child.stdout.take() {
                 let tx_clone = tx.clone();
                 thread::spawn(move || {
                     let mut reader = BufReader::new(stdout);
                     let mut buf = Vec::new();
                     let mut last_pct = -1;
-                    
+                    let mut last_done_count = 0usize;
+                    let pct_re = Regex::new(r"(\d{1,3})\s*%").ok();
+                    let count_re = Regex::new(r"(\d+)\s*/\s*(\d+)").ok();
+
                     loop {
                         let mut byte = [0u8; 1];
-                        if reader.read_exact(&mut byte).is_err() { break; }
-                        
+                        if reader.read_exact(&mut byte).is_err() {
+                            break;
+                        }
+
                         let b = byte[0];
                         if b == b'\n' || b == b'\r' {
-                            if buf.is_empty() { continue; }
+                            if buf.is_empty() {
+                                continue;
+                            }
                             let line = String::from_utf8_lossy(&buf).to_string();
                             buf.clear();
-                            
+
                             let clean_str = strip_ansi(&line);
-                            if clean_str.is_empty() { continue; }
-                            
+                            if clean_str.is_empty() {
+                                continue;
+                            }
+
                             if clean_str.contains("Testing configs") && clean_str.contains('%') {
-                                if let Some(idx) = clean_str.find('%') {
-                                    let num_str = clean_str[idx.saturating_sub(3)..idx].trim();
-                                    if let Ok(pct) = num_str.parse::<i32>() {
-                                        if pct >= last_pct + 5 || pct == 100 {
-                                            last_pct = pct;
-                                            let _ = tx_clone.send(AppEvent::Log(
-                                                LogLevel::Debug,
-                                                format!("⏳ Test Progress: {}%", pct),
-                                            ));
+                                let mut should_emit = false;
+                                let mut pct = None;
+                                let mut done_total = None;
+
+                                if let Some(re) = &pct_re {
+                                    if let Some(cap) = re.captures(&clean_str) {
+                                        pct =
+                                            cap.get(1).and_then(|m| m.as_str().parse::<i32>().ok());
+                                    }
+                                }
+                                if let Some(re) = &count_re {
+                                    if let Some(cap) = re.captures(&clean_str) {
+                                        let done = cap
+                                            .get(1)
+                                            .and_then(|m| m.as_str().parse::<usize>().ok());
+                                        let total = cap
+                                            .get(2)
+                                            .and_then(|m| m.as_str().parse::<usize>().ok());
+                                        if let (Some(d), Some(t)) = (done, total) {
+                                            done_total = Some((d, t));
                                         }
                                     }
+                                }
+
+                                if let Some(value) = pct {
+                                    if value >= last_pct + progress_step || value == 100 {
+                                        last_pct = value;
+                                        should_emit = true;
+                                    }
+                                }
+                                if let Some((done, total)) = done_total {
+                                    let min_step = (total / 20).max(1);
+                                    if done >= last_done_count.saturating_add(min_step)
+                                        || done == total
+                                    {
+                                        last_done_count = done;
+                                        should_emit = true;
+                                    }
+                                }
+
+                                if should_emit {
+                                    let progress_line = match (pct, done_total) {
+                                        (Some(p), Some((done, total))) => {
+                                            format!("⏳ Test Progress: {}% ({}/{})", p, done, total)
+                                        }
+                                        (Some(p), None) => format!("⏳ Test Progress: {}%", p),
+                                        (None, Some((done, total))) => {
+                                            format!("⏳ Test Progress: {}/{}", done, total)
+                                        }
+                                        _ => "⏳ Test Progress update received...".to_string(),
+                                    };
+                                    let _ = tx_clone
+                                        .send(AppEvent::Log(LogLevel::Debug, progress_line));
                                 }
                             } else if !clean_str.contains("it/s") && !clean_str.contains("it/hr") {
                                 let _ = tx_clone.send(AppEvent::Log(
@@ -245,10 +315,14 @@ fn run_xray_knife(tester_cfg: &TesterConfig, args: &[String], tx: &Sender<AppEve
                     let mut buf = Vec::new();
                     loop {
                         let mut byte = [0u8; 1];
-                        if reader.read_exact(&mut byte).is_err() { break; }
+                        if reader.read_exact(&mut byte).is_err() {
+                            break;
+                        }
                         let b = byte[0];
                         if b == b'\n' || b == b'\r' {
-                            if buf.is_empty() { continue; }
+                            if buf.is_empty() {
+                                continue;
+                            }
                             let line = String::from_utf8_lossy(&buf).to_string();
                             buf.clear();
                             let clean_str = strip_ansi(&line);
@@ -299,33 +373,56 @@ fn build_temp_path(file_name: &str) -> String {
 
 fn parse_delay(raw: &str) -> Option<u128> {
     let s = raw.trim().to_lowercase();
-    if s.is_empty() || s == "0" || s == "-1" || s.contains("err") || s.contains("time") || s.contains("fail") || s.contains("exceed") || s.contains("deadline") {
+    if s.is_empty()
+        || s == "0"
+        || s == "-1"
+        || s.contains("err")
+        || s.contains("time")
+        || s.contains("fail")
+        || s.contains("exceed")
+        || s.contains("deadline")
+    {
         return None;
     }
-    
+
     let just_numbers: String = s.chars().filter(|c| c.is_ascii_digit()).collect();
-    if just_numbers.is_empty() || s.len() > just_numbers.len() + 5 { 
-        return None; 
+    if just_numbers.is_empty() || s.len() > just_numbers.len() + 5 {
+        return None;
     }
-    
+
     let val = just_numbers.parse::<u128>().ok()?;
-    if val > 0 && val < 30000 { Some(val) } else { None }
+    if val > 0 && val < 30000 {
+        Some(val)
+    } else {
+        None
+    }
 }
 
 fn parse_speed(raw: &str) -> Option<f64> {
     let s = raw.trim().to_lowercase();
-    if s.is_empty() || s == "0" || s == "-1" || s.contains("err") || s.contains("time") || s.contains("fail") || s.contains("exceed") || s.contains("deadline") {
+    if s.is_empty()
+        || s == "0"
+        || s == "-1"
+        || s.contains("err")
+        || s.contains("time")
+        || s.contains("fail")
+        || s.contains("exceed")
+        || s.contains("deadline")
+    {
         return None;
     }
-    
+
     let cleaned = s.replace(',', "");
-    let numeric: String = cleaned.chars().filter(|c| c.is_ascii_digit() || *c == '.').collect();
-    if numeric.is_empty() || cleaned.len() > numeric.len() + 10 { 
-        return None; 
+    let numeric: String = cleaned
+        .chars()
+        .filter(|c| c.is_ascii_digit() || *c == '.')
+        .collect();
+    if numeric.is_empty() || cleaned.len() > numeric.len() + 10 {
+        return None;
     }
-    
+
     let mut value = numeric.parse::<f64>().ok()?;
-    
+
     if cleaned.contains("gib") || cleaned.contains("gb") {
         value *= 1024.0 * 1024.0;
     } else if cleaned.contains("mib") || cleaned.contains("mb") {
@@ -337,8 +434,12 @@ fn parse_speed(raw: &str) -> Option<f64> {
     } else if value > 5000.0 {
         value /= 1024.0;
     }
-    
-    if value > 0.0 { Some(value) } else { None }
+
+    if value > 0.0 {
+        Some(value)
+    } else {
+        None
+    }
 }
 
 fn parse_csv_results(path: &str) -> Vec<TestResult> {
@@ -355,49 +456,83 @@ fn parse_csv_results(path: &str) -> Vec<TestResult> {
         .map(|h| h.trim().trim_matches('"').to_lowercase())
         .collect();
 
-    let link_idx = headers.iter().position(|h| h == "link" || h == "config" || h.contains("url")).unwrap_or(0);
+    let link_idx = headers
+        .iter()
+        .position(|h| h == "link" || h == "config" || h.contains("url"))
+        .unwrap_or(0);
     let status_idx = headers.iter().position(|h| h == "status" || h == "state");
-    let delay_idx = headers.iter().position(|h| h == "delay" || h.contains("ping")).unwrap_or(usize::MAX);
-    let location_idx = headers.iter().position(|h| h == "location" || h == "cc").unwrap_or(usize::MAX);
-    
-    let mut download_indices: Vec<usize> = headers.iter().enumerate()
+    let delay_idx = headers
+        .iter()
+        .position(|h| h == "delay" || h.contains("ping"))
+        .unwrap_or(usize::MAX);
+    let location_idx = headers
+        .iter()
+        .position(|h| h == "location" || h == "cc")
+        .unwrap_or(usize::MAX);
+
+    let mut download_indices: Vec<usize> = headers
+        .iter()
+        .enumerate()
         .filter_map(|(idx, h)| {
-            if h == "download" || h.contains("bandwidth") || (h.contains("speed") && !h.contains("speedtest")) { Some(idx) } else { None }
-        }).collect();
+            if h == "download"
+                || h.contains("bandwidth")
+                || (h.contains("speed") && !h.contains("speedtest"))
+            {
+                Some(idx)
+            } else {
+                None
+            }
+        })
+        .collect();
     if download_indices.is_empty() {
-        if let Some(idx) = headers.iter().position(|h| h == "speed") { download_indices.push(idx); }
+        if let Some(idx) = headers.iter().position(|h| h == "speed") {
+            download_indices.push(idx);
+        }
     }
 
     let mut out = Vec::new();
     for line in lines {
         let cols = split_csv_line_with_delimiter(line, detect_csv_delimiter(header_line));
-        if link_idx >= cols.len() { continue; }
+        if link_idx >= cols.len() {
+            continue;
+        }
 
         let link = cols[link_idx].trim().trim_matches('"').to_string();
-        if link.is_empty() { continue; }
+        if link.is_empty() {
+            continue;
+        }
 
         if let Some(idx) = status_idx {
             if idx < cols.len() {
                 let status_val = cols[idx].trim().trim_matches('"').to_lowercase();
                 if status_val == "failed" || status_val == "error" || status_val == "timeout" {
-                    continue; 
+                    continue;
                 }
             }
         }
 
         let delay_ms = if delay_idx < cols.len() {
             parse_delay(cols[delay_idx].trim().trim_matches('"'))
-        } else { None };
+        } else {
+            None
+        };
 
-        let download_kb = download_indices.iter()
+        let download_kb = download_indices
+            .iter()
             .filter_map(|idx| cols.get(*idx))
             .filter_map(|v| parse_speed(v.trim().trim_matches('"')))
             .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
         let country = if location_idx < cols.len() {
             let value = cols[location_idx].trim().trim_matches('"');
-            if value.is_empty() || value == "null" { None } else { Some(value.to_string()) }
-        } else { None };
+            if value.is_empty() || value == "null" {
+                None
+            } else {
+                Some(value.to_string())
+            }
+        } else {
+            None
+        };
 
         out.push(TestResult {
             link,
@@ -413,7 +548,11 @@ fn parse_csv_results(path: &str) -> Vec<TestResult> {
 fn detect_csv_delimiter(line: &str) -> char {
     let commas = line.matches(',').count();
     let semis = line.matches(';').count();
-    if semis > commas { ';' } else { ',' }
+    if semis > commas {
+        ';'
+    } else {
+        ','
+    }
 }
 
 fn split_csv_line_auto(line: &str) -> Vec<String> {
@@ -478,7 +617,11 @@ pub fn filter_working_configs(
     }
 
     if !tester_cfg.ping_test_enabled && !tester_cfg.speed_test_enabled {
-        log_worker(&tx, LogLevel::Warning, "⚠️ Tester enabled but Ping/Speed are disabled.".to_string());
+        log_worker(
+            &tx,
+            LogLevel::Warning,
+            "⚠️ Tester enabled but Ping/Speed are disabled.".to_string(),
+        );
         return phase2;
     }
 
@@ -490,13 +633,20 @@ pub fn filter_working_configs(
         LogLevel::Info,
         format!(
             "🔬 PHASE 2 START | total={} | ping={} | speed={} | chain_ping_to_speed={}",
-            total, tester_cfg.ping_test_enabled, tester_cfg.speed_test_enabled, tester_cfg.speed_test_from_ping_passed_only
+            total,
+            tester_cfg.ping_test_enabled,
+            tester_cfg.speed_test_enabled,
+            tester_cfg.speed_test_from_ping_passed_only
         ),
     );
 
     let input_path = build_temp_path("configs_for_test.txt");
     if fs::write(&input_path, to_test.join("\n")).is_err() {
-        log_worker(&tx, LogLevel::Error, "❌ Failed to create test input file.".to_string());
+        log_worker(
+            &tx,
+            LogLevel::Error,
+            "❌ Failed to create test input file.".to_string(),
+        );
         return phase2;
     }
 
@@ -513,16 +663,27 @@ pub fn filter_working_configs(
 
         let mut args = vec![
             "http".to_string(),
-            "-f".to_string(), input_path.clone(),
-            "-t".to_string(), tester_cfg.concurrent_tests.max(1).to_string(),
-            "-o".to_string(), ping_csv.clone(),
-            "-x".to_string(), "csv".to_string(),
-            "-u".to_string(), tester_cfg.ping_test_url.clone(),
-            "-d".to_string(), tester_cfg.max_delay_ms.to_string(),
-            "--retries".to_string(), tester_cfg.retries.to_string(),
-            "--timeout".to_string(), timeout_ms,
+            "-f".to_string(),
+            input_path.clone(),
+            "-t".to_string(),
+            tester_cfg.concurrent_tests.max(1).to_string(),
+            "-o".to_string(),
+            ping_csv.clone(),
+            "-x".to_string(),
+            "csv".to_string(),
+            "-u".to_string(),
+            tester_cfg.ping_test_url.clone(),
+            "-d".to_string(),
+            tester_cfg.max_delay_ms.to_string(),
+            "--retries".to_string(),
+            tester_cfg.retries.to_string(),
+            "--timeout".to_string(),
+            timeout_ms,
         ];
-        
+        if tester_cfg.xray_verbose_logs {
+            args.push("-v".to_string());
+        }
+
         if tester_cfg.core_type != "auto" && !tester_cfg.core_type.is_empty() {
             args.push("-z".to_string());
             args.push(tester_cfg.core_type.clone());
@@ -535,24 +696,29 @@ pub fn filter_working_configs(
         if tester_cfg.allow_insecure {
             args.push("--insecure".to_string());
         }
-        
+
         append_extra_args(&mut args, &tester_cfg.extra_xray_args);
 
-        log_worker(&tx, LogLevel::Info, format!("📍 Phase2/PING start -> {}", tester_cfg.ping_test_url));
-        
+        log_worker(
+            &tx,
+            LogLevel::Info,
+            format!("📍 Phase2/PING start -> {}", tester_cfg.ping_test_url),
+        );
+
         if run_xray_knife(tester_cfg, &args, &tx) {
             let _ = fs::copy(&ping_csv, format!("{}/ping_raw.csv", debug_dir));
 
             let mut all_ping_results = parse_csv_results(&ping_csv);
             all_ping_results.retain(|r| r.delay_ms.is_some());
             all_ping_results.sort_by_key(|r| r.delay_ms.unwrap_or(u128::MAX));
-            
+
             ping_selected = all_ping_results;
 
-            phase2.ping_passed_mixed = ping_selected.iter()
+            phase2.ping_passed_mixed = ping_selected
+                .iter()
                 .map(|r| rename_config(&r.link, tester_cfg, r, None))
                 .collect();
-                
+
             log_worker(
                 &tx,
                 LogLevel::Success,
@@ -564,7 +730,11 @@ pub fn filter_working_configs(
                 ),
             );
         } else {
-            log_worker(&tx, LogLevel::Error, "❌ Ping test failed to execute.".to_string());
+            log_worker(
+                &tx,
+                LogLevel::Error,
+                "❌ Ping test failed to execute.".to_string(),
+            );
         }
         let _ = fs::remove_file(&ping_csv);
     }
@@ -584,10 +754,15 @@ pub fn filter_working_configs(
         let speed_csv = build_temp_path("speed_results.csv");
 
         let mut speed_targets: Vec<String> = Vec::new();
-        
+
         if tester_cfg.speed_test_from_ping_passed_only && tester_cfg.ping_test_enabled {
             if ping_selected.is_empty() {
-                log_worker(&tx, LogLevel::Warning, "⚠️ Chain Mode is ON but Ping found 0 configs. Skipping Speed test.".to_string());
+                log_worker(
+                    &tx,
+                    LogLevel::Warning,
+                    "⚠️ Chain Mode is ON but Ping found 0 configs. Skipping Speed test."
+                        .to_string(),
+                );
             } else {
                 speed_targets = ping_selected.iter().map(|r| r.link.clone()).collect();
             }
@@ -595,7 +770,10 @@ pub fn filter_working_configs(
             speed_targets = to_test.clone();
         }
 
-        let top_n = tester_cfg.speed_test_top_count.max(1).min(speed_targets.len());
+        let top_n = tester_cfg
+            .speed_test_top_count
+            .max(1)
+            .min(speed_targets.len());
         speed_targets.truncate(top_n);
 
         if !speed_targets.is_empty() {
@@ -611,17 +789,32 @@ pub fn filter_working_configs(
 
             if fs::write(&speed_input, speed_targets.join("\n")).is_err() {
                 let _ = fs::remove_file(&input_path);
-                log_worker(&tx, LogLevel::Error, "❌ Failed to create speed candidates file.".to_string());
+                log_worker(
+                    &tx,
+                    LogLevel::Error,
+                    "❌ Failed to create speed candidates file.".to_string(),
+                );
                 return phase2;
             }
 
-            let speed_url = if tester_cfg.speed_url_supports_bytes_query && tester_cfg.speed_test_amount_kb > 0 {
+            let speed_url = if tester_cfg.speed_url_supports_bytes_query
+                && tester_cfg.speed_test_amount_kb > 0
+            {
                 let bytes = tester_cfg.speed_test_amount_kb * 1024;
                 if tester_cfg.speed_test_url.contains("{bytes}") {
-                    tester_cfg.speed_test_url.replace("{bytes}", &bytes.to_string())
+                    tester_cfg
+                        .speed_test_url
+                        .replace("{bytes}", &bytes.to_string())
                 } else {
-                    let separator = if tester_cfg.speed_test_url.contains('?') { "&" } else { "?" };
-                    format!("{}{}{}bytes={}", tester_cfg.speed_test_url, separator, bytes, "")
+                    let separator = if tester_cfg.speed_test_url.contains('?') {
+                        "&"
+                    } else {
+                        "?"
+                    };
+                    format!(
+                        "{}{}{}bytes={}",
+                        tester_cfg.speed_test_url, separator, bytes, ""
+                    )
                 }
             } else {
                 tester_cfg.speed_test_url.clone()
@@ -629,18 +822,30 @@ pub fn filter_working_configs(
 
             let mut args = vec![
                 "http".to_string(),
-                "-f".to_string(), speed_input.clone(),
-                "-t".to_string(), tester_cfg.speed_test_batch_size.max(1).to_string(),
-                "-o".to_string(), speed_csv.clone(),
-                "-x".to_string(), "csv".to_string(),
-                "-p".to_string(), 
-                "-u".to_string(), speed_url.clone(),
-                "-a".to_string(), tester_cfg.speed_test_amount_kb.to_string(),
-                "-d".to_string(), tester_cfg.max_delay_ms.to_string(),
-                "--retries".to_string(), tester_cfg.retries.to_string(),
-                "--timeout".to_string(), (tester_cfg.speed_test_timeout_secs.max(1) * 1000).to_string(),
+                "-f".to_string(),
+                speed_input.clone(),
+                "-t".to_string(),
+                tester_cfg.speed_test_batch_size.max(1).to_string(),
+                "-o".to_string(),
+                speed_csv.clone(),
+                "-x".to_string(),
+                "csv".to_string(),
+                "-p".to_string(),
+                "-u".to_string(),
+                speed_url.clone(),
+                "-a".to_string(),
+                tester_cfg.speed_test_amount_kb.to_string(),
+                "-d".to_string(),
+                tester_cfg.max_delay_ms.to_string(),
+                "--retries".to_string(),
+                tester_cfg.retries.to_string(),
+                "--timeout".to_string(),
+                (tester_cfg.speed_test_timeout_secs.max(1) * 1000).to_string(),
             ];
-            
+            if tester_cfg.xray_verbose_logs {
+                args.push("-v".to_string());
+            }
+
             if tester_cfg.core_type != "auto" && !tester_cfg.core_type.is_empty() {
                 args.push("-z".to_string());
                 args.push(tester_cfg.core_type.clone());
@@ -653,26 +858,41 @@ pub fn filter_working_configs(
             if tester_cfg.allow_insecure {
                 args.push("--insecure".to_string());
             }
-            
+
             append_extra_args(&mut args, &tester_cfg.extra_xray_args);
 
-            log_worker(&tx, LogLevel::Info, format!("🚀 Phase2/SPEED start -> {}", speed_url));
-            
+            log_worker(
+                &tx,
+                LogLevel::Info,
+                format!("🚀 Phase2/SPEED start -> {}", speed_url),
+            );
+
             if run_xray_knife(tester_cfg, &args, &tx) {
                 let _ = fs::copy(&speed_csv, format!("{}/speed_raw.csv", debug_dir));
 
                 let mut parsed_speed = parse_csv_results(&speed_csv);
                 parsed_speed.retain(|item| item.download_kb.unwrap_or(0.0) > 0.0);
-                parsed_speed.sort_by(|a, b| b.download_kb.unwrap_or(0.0).partial_cmp(&a.download_kb.unwrap_or(0.0)).unwrap_or(std::cmp::Ordering::Equal));
-                
-                phase2.speed_passed_mixed = parsed_speed.iter().enumerate()
+                parsed_speed.sort_by(|a, b| {
+                    b.download_kb
+                        .unwrap_or(0.0)
+                        .partial_cmp(&a.download_kb.unwrap_or(0.0))
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                });
+
+                phase2.speed_passed_mixed = parsed_speed
+                    .iter()
+                    .enumerate()
                     .map(|(i, r)| rename_config(&r.link, tester_cfg, r, Some(i + 1)))
                     .collect();
 
                 speed_selected = parsed_speed;
                 use_rank = true;
             } else {
-                log_worker(&tx, LogLevel::Warning, "⚠️ Speed test failed to execute.".to_string());
+                log_worker(
+                    &tx,
+                    LogLevel::Warning,
+                    "⚠️ Speed test failed to execute.".to_string(),
+                );
             }
 
             log_worker(
@@ -694,11 +914,13 @@ pub fn filter_working_configs(
     let _ = fs::remove_file(&input_path);
 
     for (proto, links) in configs_map.iter_mut() {
-        if !NON_MIXED_PROTOCOLS.contains(&proto.as_str()) { links.clear(); }
+        if !NON_MIXED_PROTOCOLS.contains(&proto.as_str()) {
+            links.clear();
+        }
     }
 
     let mut final_output_map: HashMap<String, String> = HashMap::new();
-    
+
     if tester_cfg.ping_test_enabled {
         for r in &ping_selected {
             final_output_map.insert(r.link.clone(), rename_config(&r.link, tester_cfg, r, None));
@@ -718,7 +940,10 @@ pub fn filter_working_configs(
     let mut passed_count = 0usize;
     for (orig_link, renamed_link) in final_output_map {
         if let Some(proto) = proto_by_link.get(&orig_link) {
-            configs_map.entry(proto.clone()).or_default().insert(renamed_link);
+            configs_map
+                .entry(proto.clone())
+                .or_default()
+                .insert(renamed_link);
             passed_count += 1;
         }
     }
@@ -726,8 +951,11 @@ pub fn filter_working_configs(
     log_worker(
         &tx,
         LogLevel::Success,
-        format!("🏁 PHASE 2 COMPLETE | final_passed_unique={}/{}", passed_count, total),
+        format!(
+            "🏁 PHASE 2 COMPLETE | final_passed_unique={}/{}",
+            passed_count, total
+        ),
     );
-    
+
     phase2
 }
