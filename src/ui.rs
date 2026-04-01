@@ -180,7 +180,9 @@ impl AppState {
         let stop_flag = self.stop_flag.clone();
 
         self.worker_handle = Some(thread::spawn(move || {
-            if let Err(err) = run_worker(cfg, channels_raw, subscriptions_raw, stop_flag, tx.clone()) {
+            if let Err(err) =
+                run_worker(cfg, channels_raw, subscriptions_raw, stop_flag, tx.clone())
+            {
                 let _ = tx.send(AppEvent::Log(LogLevel::Error, format!("🔥 CRASH: {}", err)));
             }
             let _ = tx.send(AppEvent::WorkerStopped);
@@ -599,7 +601,7 @@ impl eframe::App for AppState {
                                 .show(ui, |ui| {
                                     ui.heading(egui::RichText::new("⚙ Engine Parameters").size(14.0).color(egui::Color32::from_rgb(200, 200, 200)));
                                     ui.add_space(4.0);
-                                    
+
                                     ui.horizontal(|ui| {
                                         ui.label("Core Type:");
                                         egui::ComboBox::from_id_salt("core_type")
@@ -614,14 +616,14 @@ impl eframe::App for AppState {
                                                 ui.selectable_value(&mut self.config.tester.core_type, "singbox".to_string(), "Sing-Box");
                                             });
                                     });
-                                    
+
                                     ui.horizontal(|ui| {
                                         ui.label("Concurrent Tests:");
                                         ui.add(egui::DragValue::new(&mut self.config.tester.concurrent_tests).range(1..=500));
                                         ui.label("  Retries:");
                                         ui.add(egui::DragValue::new(&mut self.config.tester.retries).range(0..=5));
                                     });
-                                    
+
                                     ui.horizontal(|ui| {
                                         ui.label("Max Delay (ms):");
                                         ui.add(egui::DragValue::new(&mut self.config.tester.max_delay_ms).range(100..=30000))
@@ -690,14 +692,14 @@ impl eframe::App for AppState {
                                                 ui.selectable_value(&mut self.config.tester.speed_url_preset, 0, "Custom");
                                             });
                                     });
-                                    
+
                                     ui.checkbox(&mut self.config.tester.speed_url_supports_bytes_query, "Append bytes query to URL ({bytes})");
                                     ui.horizontal(|ui| {
                                         ui.label("DL Amount (KB):")
                                             .on_hover_text("-a flag. Sets the size of the download file in KB.");
                                         ui.add(egui::DragValue::new(&mut self.config.tester.speed_test_amount_kb).range(10..=100_000));
                                     });
-                                    
+
                                     ui.horizontal(|ui| {
                                         ui.label("Batch Size:");
                                         ui.add(egui::DragValue::new(&mut self.config.tester.speed_test_batch_size).range(1..=100));
@@ -708,24 +710,34 @@ impl eframe::App for AppState {
                                         ui.label("Top by Ping for Speed:");
                                         ui.add(egui::DragValue::new(&mut self.config.tester.speed_test_top_count).range(1..=10_000));
                                     });
-                                    
+
                                     ui.add_space(8.0);
                                     ui.separator();
                                     ui.add_space(8.0);
-                                    
+
                                     ui.heading(egui::RichText::new("🔧 Advanced Flags").size(14.0).color(egui::Color32::from_rgb(200, 200, 200)));
                                     ui.add_space(4.0);
 
                                     ui.checkbox(&mut self.config.tester.resolve_real_ip, "Resolve Real IP & Location (-r)");
                                     ui.checkbox(&mut self.config.tester.allow_insecure, "Allow Insecure TLS (--insecure)")
                                         .on_hover_text("Bypasses invalid SSL certificates. Crucial for finding free/leaked Telegram configs.");
-                                        
+                                    ui.checkbox(&mut self.config.tester.xray_verbose_logs, "Enable xray-knife verbose log (-v)")
+                                        .on_hover_text("Shows detailed xray-knife runtime logs inside Terminal Log.");
+                                    ui.horizontal(|ui| {
+                                        ui.label("Progress log step (%):");
+                                        ui.add(egui::DragValue::new(&mut self.config.tester.progress_log_step_percent).range(1..=50))
+                                            .on_hover_text("Emit progress updates every N percent to keep logs clean.");
+                                    });
+                                    #[cfg(windows)]
+                                    ui.checkbox(&mut self.config.tester.show_xray_window_on_windows, "Show xray-knife console window")
+                                        .on_hover_text("If enabled, xray-knife console window will be visible during testing.");
+
                                     ui.horizontal(|ui| {
                                         ui.label("Extra args:");
                                         ui.text_edit_singleline(&mut self.config.tester.extra_xray_args)
                                             .on_hover_text("Any extra flags supported by xray-knife http (advanced). Example: --xfdb");
                                     });
-                                    
+
                                     ui.add_space(4.0);
                                     ui.heading(egui::RichText::new("🏷️ Naming & Tags").size(14.0).color(egui::Color32::from_rgb(200, 200, 200)));
                                     ui.checkbox(&mut self.config.tester.append_ping_flag, "Append Ping to Config Name");
