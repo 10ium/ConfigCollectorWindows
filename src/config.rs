@@ -7,6 +7,7 @@ use std::path::Path;
 
 pub const APP_CONFIG_PATH: &str = "config/app_config.toml";
 pub const CHANNELS_PATH: &str = "config/channels.txt";
+pub const SUBSCRIPTIONS_PATH: &str = "config/subscriptions.txt";
 pub const HISTORY_PATH: &str = "config/sent_history.json";
 pub const MEMORY_PATH: &str = "config/channel_memory.json";
 
@@ -48,6 +49,19 @@ pub enum ProxyType {
     System,
     Http,
     Socks5,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum InputSourceMode {
+    TelegramChannels,
+    SubscriptionLinks,
+    LocalTextFolder,
+}
+
+impl Default for InputSourceMode {
+    fn default() -> Self {
+        Self::TelegramChannels
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -237,6 +251,8 @@ impl Default for ClashConverterConfig {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppConfig {
+    pub input_mode: InputSourceMode,
+    pub local_text_folder: String,
     pub interval_minutes: u64,
     pub max_pages_per_channel: usize,
     pub lookback_days: i64,
@@ -272,6 +288,8 @@ impl Default for AppConfig {
             );
         }
         Self {
+            input_mode: InputSourceMode::TelegramChannels,
+            local_text_folder: "".to_string(),
             interval_minutes: 5,
             max_pages_per_channel: 10,
             lookback_days: 1,
