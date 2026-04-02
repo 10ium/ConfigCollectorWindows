@@ -4,6 +4,7 @@ use crate::config::{
 use crate::scraper::{build_client, run_worker, AppEvent, LogLevel};
 use chrono::Local;
 use eframe::egui;
+use rfd::FileDialog;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
@@ -431,7 +432,16 @@ impl eframe::App for AppState {
 
                             ui.add_space(15.0);
                             ui.heading(egui::RichText::new("💾 Output Settings").color(egui::Color32::LIGHT_BLUE));
-                            ui.horizontal(|ui| { ui.label("Folder:"); ui.text_edit_singleline(&mut self.config.output_directory).on_hover_text("Directory path to save results."); });
+                            ui.horizontal(|ui| {
+                                ui.label("Folder:");
+                                ui.text_edit_singleline(&mut self.config.output_directory)
+                                    .on_hover_text("Directory path to save results.");
+                                if ui.button("📁 Browse...").clicked() {
+                                    if let Some(path) = FileDialog::new().pick_folder() {
+                                        self.config.output_directory = path.display().to_string();
+                                    }
+                                }
+                            });
                             ui.checkbox(&mut self.config.output_new_only_enabled, "Save New Configs Only (new_only)");
                             ui.checkbox(&mut self.config.output_append_unique_enabled, "Backup Unique Configs (append_unique)");
 
@@ -545,6 +555,11 @@ impl eframe::App for AppState {
                                     ui.horizontal(|ui| {
                                         ui.label("Folder path:");
                                         ui.text_edit_singleline(&mut self.config.local_text_folder);
+                                        if ui.button("📁 Browse...").clicked() {
+                                            if let Some(path) = FileDialog::new().pick_folder() {
+                                                self.config.local_text_folder = path.display().to_string();
+                                            }
+                                        }
                                     });
                                 }
                             }
@@ -754,6 +769,12 @@ impl eframe::App for AppState {
                             ui.horizontal(|ui| {
                                 ui.label("Binary Path:");
                                 ui.text_edit_singleline(&mut self.config.tester.xray_knife_path);
+                                if ui.button("📄 Browse...").clicked() {
+                                    if let Some(path) = FileDialog::new().pick_file() {
+                                        self.config.tester.xray_knife_path =
+                                            path.display().to_string();
+                                    }
+                                }
                             });
 
                             ui.add_space(15.0);
@@ -868,6 +889,41 @@ impl eframe::App for AppState {
                             ui.with_layout(
                                 egui::Layout::right_to_left(egui::Align::Center),
                                 |ui| {
+                                    if ui.button("📋 Copy Tested Configs").clicked() {
+                                        let tested_path = Path::new(&self.config.output_directory)
+                                            .join("tested.txt");
+                                        match fs::read_to_string(&tested_path) {
+                                            Ok(content) if !content.trim().is_empty() => {
+                                                ctx.output_mut(|o| o.copied_text = content);
+                                                self.add_log(
+                                                    LogLevel::Success,
+                                                    format!(
+                                                        "📋 tested.txt copied to clipboard from {}",
+                                                        tested_path.display()
+                                                    ),
+                                                );
+                                            }
+                                            Ok(_) => {
+                                                self.add_log(
+                                                    LogLevel::Warning,
+                                                    format!(
+                                                        "⚠️ tested.txt is empty: {}",
+                                                        tested_path.display()
+                                                    ),
+                                                );
+                                            }
+                                            Err(e) => {
+                                                self.add_log(
+                                                    LogLevel::Error,
+                                                    format!(
+                                                        "❌ Could not read tested.txt: {} ({})",
+                                                        tested_path.display(),
+                                                        e
+                                                    ),
+                                                );
+                                            }
+                                        }
+                                    }
                                     if ui.button("Clear").clicked() {
                                         self.logs.clear();
                                     }

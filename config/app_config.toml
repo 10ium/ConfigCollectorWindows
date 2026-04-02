@@ -1,118 +1,197 @@
-interval_minutes = 5
-max_pages_per_channel = 8
+input_mode = "LocalTextFolder"
+local_text_folder = 'd:\ConfigCollectorWindowsnew\list config'
+interval_minutes = 15
+max_pages_per_channel = 10
 lookback_days = 1
 proxy_type = "None"
-proxy_host = ""
-proxy_port = 1080
-proxy_username = ""
-proxy_password = ""
+proxy_host = "127.0.0.1"
+proxy_port = 10808
+performance = "MediumPC"
+delay_ms = 2000
+timeout_secs = 15
+concurrent_channels = 3
+ignore_ssl_errors = true
+remote_dns = true
+output_directory = "output"
 output_new_only_enabled = true
-output_append_unique_enabled = false
-
-[protocol_rules.vmess]
-enabled = true
-max_count = 500
-
-[protocol_rules.vless]
-enabled = true
-max_count = 500
-
-[protocol_rules.trojan]
-enabled = true
-max_count = 500
-
-[protocol_rules.ss]
-enabled = true
-max_count = 500
-
-[protocol_rules.ssr]
-enabled = true
-max_count = 500
-
-[protocol_rules.tuic]
-enabled = true
-max_count = 500
-
-[protocol_rules.hysteria]
-enabled = true
-max_count = 500
-
-[protocol_rules.hysteria2]
-enabled = true
-max_count = 500
-
-[protocol_rules.hy2]
-enabled = true
-max_count = 500
-
-[protocol_rules.juicity]
-enabled = true
-max_count = 500
-
-[protocol_rules.snell]
-enabled = true
-max_count = 500
+output_append_unique_enabled = true
+app_update_repo = "10ium/ConfigCollectorWindows"
 
 [protocol_rules.anytls]
 enabled = true
-max_count = 500
-
-[protocol_rules.ssh]
-enabled = true
-max_count = 500
-
-[protocol_rules.wireguard]
-enabled = true
-max_count = 500
-
-[protocol_rules.wg]
-enabled = true
-max_count = 500
-
-[protocol_rules.warp]
-enabled = true
-max_count = 500
-
-[protocol_rules.socks]
-enabled = true
-max_count = 500
-
-[protocol_rules.socks4]
-enabled = true
-max_count = 500
-
-[protocol_rules.socks5]
-enabled = true
-max_count = 500
-
-[protocol_rules.tg]
-enabled = true
-max_count = 500
+max_count = 0
 
 [protocol_rules.dns]
 enabled = true
-max_count = 500
-
-[protocol_rules.nm-dns]
-enabled = true
-max_count = 500
-
-[protocol_rules.nm-vless]
-enabled = true
-max_count = 500
-
-[protocol_rules.slipnet-enc]
-enabled = true
-max_count = 500
-
-[protocol_rules.slipnet]
-enabled = true
-max_count = 500
-
-[protocol_rules.slipstream]
-enabled = true
-max_count = 500
+max_count = 0
 
 [protocol_rules.dnstt]
 enabled = true
-max_count = 500
+max_count = 0
+
+[protocol_rules.hy2]
+enabled = true
+max_count = 0
+
+[protocol_rules.hysteria]
+enabled = true
+max_count = 0
+
+[protocol_rules.hysteria2]
+enabled = true
+max_count = 0
+
+[protocol_rules.juicity]
+enabled = true
+max_count = 0
+
+[protocol_rules.nm-dns]
+enabled = true
+max_count = 0
+
+[protocol_rules.nm-vless]
+enabled = true
+max_count = 0
+
+[protocol_rules.slipnet]
+enabled = true
+max_count = 0
+
+[protocol_rules.slipnet-enc]
+enabled = true
+max_count = 0
+
+[protocol_rules.slipstream]
+enabled = true
+max_count = 0
+
+[protocol_rules.snell]
+enabled = true
+max_count = 0
+
+[protocol_rules.socks]
+enabled = true
+max_count = 0
+
+[protocol_rules.socks4]
+enabled = true
+max_count = 0
+
+[protocol_rules.socks5]
+enabled = true
+max_count = 0
+
+[protocol_rules.ss]
+enabled = true
+max_count = 0
+
+[protocol_rules.ssh]
+enabled = true
+max_count = 0
+
+[protocol_rules.ssr]
+enabled = true
+max_count = 0
+
+[protocol_rules.tg]
+enabled = true
+max_count = 0
+
+[protocol_rules.trojan]
+enabled = true
+max_count = 0
+
+[protocol_rules.tuic]
+enabled = true
+max_count = 0
+
+[protocol_rules.vless]
+enabled = true
+max_count = 0
+
+[protocol_rules.vmess]
+enabled = true
+max_count = 0
+
+[protocol_rules.warp]
+enabled = true
+max_count = 0
+
+[protocol_rules.wg]
+enabled = true
+max_count = 0
+
+[protocol_rules.wireguard]
+enabled = true
+max_count = 0
+
+[tester]
+enabled = true
+concurrent_tests = 50
+core_type = "auto"
+max_delay_ms = 30000
+retries = 1
+resolve_real_ip = true
+timeout_secs = 60
+test_url = "https://telegram.org/"
+ping_test_enabled = true
+ping_test_url = "https://1.1.1.1/cdn-cgi/trace"
+ping_url_preset = 4
+speed_test_enabled = false
+speed_test_url = "https://speed.cloudflare.com/__down"
+speed_url_preset = 0
+speed_url_supports_bytes_query = true
+speed_test_amount_kb = 5000
+speed_test_top_count = 300
+speed_test_batch_size = 10
+speed_test_timeout_secs = 10
+append_ping_flag = true
+append_speed_flag = true
+append_country_flag = true
+speed_test_from_ping_passed_only = false
+extra_xray_args = ""
+xray_knife_path = "xray-knife.exe"
+allow_insecure = true
+xray_verbose_logs = false
+show_xray_window_on_windows = true
+progress_log_step_percent = 2
+
+[clash_converter]
+enabled = true
+output_full_config = true
+total_limit = 0
+
+[clash_converter.protocol_rules.hysteria2]
+enabled = true
+max_count = 0
+priority = 5
+
+[clash_converter.protocol_rules.ss]
+enabled = true
+max_count = 0
+priority = 2
+
+[clash_converter.protocol_rules.trojan]
+enabled = true
+max_count = 0
+priority = 3
+
+[clash_converter.protocol_rules.vless]
+enabled = true
+max_count = 0
+priority = 1
+
+[clash_converter.protocol_rules.vmess]
+enabled = true
+max_count = 0
+priority = 4
+
+[phase5_telegram]
+enabled = false
+bot_token = ""
+chat_id = ""
+post_config_count = 10
+header_enabled = false
+header_text = ""
+footer_enabled = false
+footer_text = ""

@@ -11,7 +11,7 @@ pub const SUBSCRIPTIONS_PATH: &str = "config/subscriptions.txt";
 pub const HISTORY_PATH: &str = "config/sent_history.json";
 pub const MEMORY_PATH: &str = "config/channel_memory.json";
 
-pub const DEFAULT_TARGETS: &str = "@IranProxyPlus\nhttps://t.me/filembad\nhttps://t.me/persianvpnhub\nhttps://t.me/Speeds_vpn1\n@SOSkeyNET\nhttps://t.me/vasl_bashim\n@configraygan\nhttps://t.me/AR14N24B";
+pub const DEFAULT_TARGETS: &str = "@AHWAZIConnect\n@AKLISvpn\n@AR14N24B\n@AzadNet\n@BahamestanAzadi\n@BugFreeNet\n@Capoit\n@Config724\n@DarcProxy\n@DirectVPN\n@Express_freevpn\n@Filter_breaker\n@Go_vpns\n@Gozarnetir\n@HOKM_AKHAR\n@Hiddify_Nexttt\n@IranProxyPlus\n@KIA_NET\n@KW1VPN\n@Khosrow_vpn\n@LagVPN\n@LetIranBreath\n@Lx3vpn\n@MARAMBASHI\n@Masyakata\n@MatinSenPaii\n@Maznet\n@MerlinVpn\n@NetAccount\n@PathToArrive\n@PewezaVPN\n@PrivateVPNs\n@ProfxPsiphon\n@ProxyFa10\n@SOSkeyNET\n@SamnetInternet\n@ShadowProxy66\n@ShadowSocks_s\n@SorushVpn\n@Speeds_vpn1\n@V2ray20261\n@V2rayEnglish\n@V2raybazi\n@VPN_KING_V2RAY\n@Varkana0\n@Vpn_Sky\n@Vpn_m2s\n@Wpnfa\n@XV2RAY\n@acccrd\n@airdrop2033\n@allworldcfg\n@amir_webstudio\n@anty_filter\n@asrnovin_ir\n@chillguy_vpn\n@club_profsor\n@configfa\n@configraygan\n@filembad\n@free_fastvpn\n@free_netplus\n@freedom_soldiers1\n@freev2config\n@habsiop\n@hacknashidd\n@hamedvpns\n@i10VPN\n@iVPN26\n@irFreeProxy\n@irazadd\n@irdnstt\n@isprox\n@llFreak\n@meliproxyy\n@mindism\n@mypremium98\n@net_cir\n@our_time_is_now\n@persianvpnhub\n@proxy_kafee\n@proxy_online_net\n@prrofile_purple\n@saministamm\n@sinavm\n@tel_melli\n@v2FreeHub\n@v2nodes\n@vasl_bashim\n@vaslbashi\n@vmessorg\n@wiki_tajrobe\n@xsfilternet\n@yebekhe\n@zede_filteri";
 
 pub const DEFAULT_PROTOCOLS: [&str; 27] = [
     "vmess",
@@ -124,22 +124,22 @@ impl Default for TesterConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            concurrent_tests: 10,
+            concurrent_tests: 50,
 
             // مقادیر پیش‌فرض جدید
             core_type: "auto".to_string(),
-            max_delay_ms: 5000,
-            retries: 0,
+            max_delay_ms: 30000,
+            retries: 1,
             resolve_real_ip: true,
 
-            timeout_secs: 6,
+            timeout_secs: 60,
             test_url: "https://telegram.org/".to_string(),
 
-            ping_test_enabled: false,
+            ping_test_enabled: true,
             ping_test_url: "https://telegram.org/favicon.ico".to_string(),
-            ping_url_preset: 1,
+            ping_url_preset: 4,
 
-            speed_test_enabled: true,
+            speed_test_enabled: false,
             speed_test_url: "https://speed.cloudflare.com/__down".to_string(),
             speed_url_preset: 0,
             speed_url_supports_bytes_query: true,
@@ -162,8 +162,8 @@ impl Default for TesterConfig {
             },
             allow_insecure: true,
             xray_verbose_logs: false,
-            show_xray_window_on_windows: false,
-            progress_log_step_percent: 10,
+            show_xray_window_on_windows: true,
+            progress_log_step_percent: 2,
         }
     }
 }
@@ -247,7 +247,7 @@ impl Default for ClashConverterConfig {
 
         Self {
             enabled: true,
-            output_full_config: false,
+            output_full_config: true,
             total_limit: 0,
             protocol_rules,
         }
@@ -294,12 +294,12 @@ impl Default for AppConfig {
             );
         }
         Self {
-            input_mode: InputSourceMode::TelegramChannels,
-            local_text_folder: "".to_string(),
-            interval_minutes: 5,
+            input_mode: InputSourceMode::LocalTextFolder,
+            local_text_folder: "d:\\ConfigCollectorWindowsnew\\list config".to_string(),
+            interval_minutes: 15,
             max_pages_per_channel: 10,
             lookback_days: 1,
-            proxy_type: ProxyType::System,
+            proxy_type: ProxyType::None,
             proxy_host: "127.0.0.1".to_string(),
             proxy_port: 10808,
             performance: PerformanceProfile::MediumPC,
