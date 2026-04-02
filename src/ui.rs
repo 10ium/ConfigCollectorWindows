@@ -889,6 +889,41 @@ impl eframe::App for AppState {
                             ui.with_layout(
                                 egui::Layout::right_to_left(egui::Align::Center),
                                 |ui| {
+                                    if ui.button("📋 Copy Tested Configs").clicked() {
+                                        let tested_path = Path::new(&self.config.output_directory)
+                                            .join("tested.txt");
+                                        match fs::read_to_string(&tested_path) {
+                                            Ok(content) if !content.trim().is_empty() => {
+                                                ctx.output_mut(|o| o.copied_text = content);
+                                                self.add_log(
+                                                    LogLevel::Success,
+                                                    format!(
+                                                        "📋 tested.txt copied to clipboard from {}",
+                                                        tested_path.display()
+                                                    ),
+                                                );
+                                            }
+                                            Ok(_) => {
+                                                self.add_log(
+                                                    LogLevel::Warning,
+                                                    format!(
+                                                        "⚠️ tested.txt is empty: {}",
+                                                        tested_path.display()
+                                                    ),
+                                                );
+                                            }
+                                            Err(e) => {
+                                                self.add_log(
+                                                    LogLevel::Error,
+                                                    format!(
+                                                        "❌ Could not read tested.txt: {} ({})",
+                                                        tested_path.display(),
+                                                        e
+                                                    ),
+                                                );
+                                            }
+                                        }
+                                    }
                                     if ui.button("Clear").clicked() {
                                         self.logs.clear();
                                     }
