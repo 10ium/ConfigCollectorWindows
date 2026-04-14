@@ -758,6 +758,11 @@ impl eframe::App for AppState {
                                     ui.checkbox(&mut self.config.tester.append_ping_flag, "Append Ping to Config Name");
                                     ui.checkbox(&mut self.config.tester.append_speed_flag, "Append Download Speed to Config Name");
                                     ui.checkbox(&mut self.config.tester.append_country_flag, "Append Country Flag Emoji to Config Name");
+                                    
+                                    ui.add_space(4.0);
+                                    ui.heading(egui::RichText::new("🔔 Notifications & Sounds").size(14.0).color(egui::Color32::from_rgb(200, 200, 200)));
+                                    ui.checkbox(&mut self.config.tester.notify_on_found, "Show System Notification when valid config found");
+                                    ui.checkbox(&mut self.config.tester.beep_on_found, "Play Beep Sound when valid config found");
                                 });
 
                             ui.add_space(20.0);
@@ -958,20 +963,25 @@ impl eframe::App for AppState {
                                         || text_lower.contains("final_passed")
                                         || text_lower.contains("sent_configs=")
                                         || text_lower.contains("post ")
+                                        || text_lower.contains("found 1 new working")
                                     {
                                         egui::Color32::from_rgb(255, 220, 90)
                                     } else {
                                         base_color
                                     };
-                                    ui.horizontal_wrapped(|ui| {
+                                    
+                                    // تغییر جدید برای جلوگیری از بیرون زدگی متن 
+                                    ui.horizontal(|ui| {
                                         ui.label(
                                             egui::RichText::new(format!("[{}]", log.time))
                                                 .color(egui::Color32::from_rgb(80, 90, 110))
                                                 .monospace()
                                                 .small(),
                                         );
-                                        ui.label(
-                                            egui::RichText::new(&log.text).color(color).monospace(),
+                                        ui.add(
+                                            egui::Label::new(
+                                                egui::RichText::new(&log.text).color(color).monospace()
+                                            ).wrap(),
                                         );
                                     });
                                 }
