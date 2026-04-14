@@ -8,6 +8,9 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Instant, SystemTime, UNIX_EPOCH, Duration};
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use regex::Regex;
 use serde_json::Value;
@@ -204,7 +207,7 @@ fn trigger_alert(beep: bool, notify: bool) {
             $n = new-object system.windows.forms.notifyicon
             $n.icon = [system.drawing.systemicons]::information
             $n.visible = $true
-            $n.showballoontip(3000, "Freedom Config Collector", "✅ Valid Config Found!", [system.windows.forms.tooltipicon]::info)
+            $n.showballoontip(3000, "Freedom Config Collector", "✅ Valid Config Found!",[system.windows.forms.tooltipicon]::info)
             Start-Sleep -Seconds 4
             $n.dispose()
             "#;
@@ -370,7 +373,7 @@ fn run_xray_knife(
                         let mut reader = BufReader::new(stderr);
                         let mut buf = Vec::new();
                         loop {
-                            let mut byte = [0u8; 1];
+                            let mut byte =[0u8; 1];
                             if reader.read_exact(&mut byte).is_err() {
                                 break;
                             }
