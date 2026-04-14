@@ -84,13 +84,12 @@ pub struct TesterConfig {
     pub enabled: bool,
     pub concurrent_tests: usize,
 
-    // پارامترهای جدید و اصلاح شده برای هسته xray-knife
-    pub core_type: String,     // -z, --core (auto, singbox, xray)
-    pub max_delay_ms: u32,     // -d, --mdelay
-    pub retries: u16,          // --retries
-    pub resolve_real_ip: bool, // -r, --rip
+    pub core_type: String,     
+    pub max_delay_ms: u32,     
+    pub retries: u16,          
+    pub resolve_real_ip: bool, 
 
-    pub timeout_secs: u64, // --timeout
+    pub timeout_secs: u64, 
     pub test_url: String,
 
     pub ping_test_enabled: bool,
@@ -102,10 +101,10 @@ pub struct TesterConfig {
     pub speed_url_preset: u8,
     pub speed_url_supports_bytes_query: bool,
 
-    pub speed_test_amount_kb: u32, // -a, --amount (حجم دانلود و آپلود به کیلوبایت)
+    pub speed_test_amount_kb: u32, 
     pub speed_test_top_count: usize,
     pub speed_test_batch_size: usize,
-    pub speed_test_timeout_secs: u64, // --timeout برای سرعت
+    pub speed_test_timeout_secs: u64, 
 
     pub append_ping_flag: bool,
     pub append_speed_flag: bool,
@@ -114,10 +113,14 @@ pub struct TesterConfig {
 
     pub extra_xray_args: String,
     pub xray_knife_path: String,
-    pub allow_insecure: bool, // -e, --insecure
+    pub allow_insecure: bool, 
     pub xray_verbose_logs: bool,
     pub show_xray_window_on_windows: bool,
     pub progress_log_step_percent: u8,
+    
+    // قابلیت های جدید اضافه شده
+    pub notify_on_found: bool,
+    pub beep_on_found: bool,
 }
 
 impl Default for TesterConfig {
@@ -126,7 +129,6 @@ impl Default for TesterConfig {
             enabled: true,
             concurrent_tests: 50,
 
-            // مقادیر پیش‌فرض جدید
             core_type: "auto".to_string(),
             max_delay_ms: 30000,
             retries: 1,
@@ -144,7 +146,7 @@ impl Default for TesterConfig {
             speed_url_preset: 0,
             speed_url_supports_bytes_query: true,
 
-            speed_test_amount_kb: 5000, // 5 مگابایت پیش‌فرض
+            speed_test_amount_kb: 5000, 
             speed_test_top_count: 300,
             speed_test_batch_size: 10,
             speed_test_timeout_secs: 10,
@@ -164,6 +166,10 @@ impl Default for TesterConfig {
             xray_verbose_logs: false,
             show_xray_window_on_windows: true,
             progress_log_step_percent: 2,
+            
+            // پیش‌فرض قابلیت‌های جدید
+            notify_on_found: false,
+            beep_on_found: false,
         }
     }
 }
