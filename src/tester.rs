@@ -205,7 +205,7 @@ fn trigger_alert(beep: bool, notify: bool) {
             let script = r#"
             [reflection.assembly]::loadwithpartialname("System.Windows.Forms") | Out-Null
             $n = new-object system.windows.forms.notifyicon
-            $n.icon = [system.drawing.systemicons]::information
+            $n.icon =[system.drawing.systemicons]::information
             $n.visible = $true
             $n.showballoontip(3000, "Freedom Config Collector", "✅ Valid Config Found!",[system.windows.forms.tooltipicon]::info)
             Start-Sleep -Seconds 4
@@ -225,6 +225,7 @@ fn run_xray_knife(
     args: &[String],
     csv_path: &str,
     tx: &Sender<AppEvent>,
+    stop_flag: Arc<AtomicBool>,
 ) -> bool {
     let mut command = Command::new(&tester_cfg.xray_knife_path);
     command
@@ -242,11 +243,9 @@ fn run_xray_knife(
     let show_window = tester_cfg.show_xray_window_on_windows;
 
     if show_window {
-        // ایجاد کنسول واقعی و مستقل برای رفع مشکل صفحه سیاه
         #[cfg(windows)]
         command.creation_flags(CREATE_NEW_CONSOLE);
     } else {
-        // استفاده از پایپ برای خواندن لاگ و پنهان کردن خط فرمان
         command.stdout(Stdio::piped());
         command.stderr(Stdio::piped());
         #[cfg(windows)]
@@ -257,35 +256,48 @@ fn run_xray_knife(
         Ok(mut child) => {
             let is_running = Arc::new(AtomicBool::new(true));
             
-            // ترد ناظر هوشمند روی فایل CSV جهت تشخیص کانفیگ سالم
+            // ترد ناظر هوشمند (جهت ایجاد خروجی در لحظه و آلارم دهی)
             let is_running_csv = is_running.clone();
             let csv_path_str = csv_path.to_string();
             let tx_clone_csv = tx.clone();
             let beep = tester_cfg.beep_on_found;
             let notify = tester_cfg.notify_on_found;
+            let tester_cfg_clone = tester_cfg.clone();
 
             thread::spawn(move || {
-                let mut last_count = 0;
+                let mut last_valid_count = 0;
                 let mut last_alert = Instant::now() - Duration::from_secs(10);
+                let live_txt_path = std::env::current_dir().unwrap_or_default().join("Live_Working_Configs.txt");
 
                 while is_running_csv.load(Ordering::SeqCst) {
-                    if let Ok(content) = fs::read_to_string(&csv_path_str) {
-                        let lines = content.lines().count();
-                        let passed = lines.saturating_sub(1); 
-                        if passed > last_count {
-                            let diff = passed - last_count;
-                            last_count = passed;
-                            
-                            let _ = tx_clone_csv.send(AppEvent::Log(
-                                LogLevel::Success, 
-                                format!("🎉 Found {} new working config(s)! (Total: {})", diff, passed)
-                            ));
+                    let results = parse_csv_results(&csv_path_str);
+                    
+                    // فقط کانفیگ‌هایی که واقعاً سالم هستند (دیلی یا سرعت دارند)
+                    let valid_results: Vec<_> = results.into_iter()
+                        .filter(|r| r.delay_ms.is_some() || r.download_kb.unwrap_or(0.0) > 0.0)
+                        .collect();
+                        
+                    let valid_count = valid_results.len();
 
-                            // جلوگیری از هنگ کردن سیستم با محدود کردن تولید صدا (Rate Limit)
-                            if (beep || notify) && last_alert.elapsed().as_secs() >= 3 {
-                                trigger_alert(beep, notify);
-                                last_alert = Instant::now();
-                            }
+                    if valid_count > last_valid_count {
+                        let diff = valid_count - last_valid_count;
+                        last_valid_count = valid_count;
+                        
+                        // ساخت و بروزرسانی آنی فایل Live_Working_Configs.txt
+                        let renamed_links: Vec<String> = valid_results.iter()
+                            .map(|r| rename_config(&r.link, &tester_cfg_clone, r, None))
+                            .collect();
+                        let _ = fs::write(&live_txt_path, renamed_links.join("\n"));
+
+                        let _ = tx_clone_csv.send(AppEvent::Log(
+                            LogLevel::Success, 
+                            format!("🎉 Found {} new working config(s)! (Total: {}) -> Saved to Live_Working_Configs.txt", diff, valid_count)
+                        ));
+
+                        // Rate Limiting برای جلوگیری از اسپم صدا و نوتیفیکیشن
+                        if (beep || notify) && last_alert.elapsed().as_secs() >= 3 {
+                            trigger_alert(beep, notify);
+                            last_alert = Instant::now();
                         }
                     }
                     thread::sleep(Duration::from_millis(1000));
@@ -306,6 +318,7 @@ fn run_xray_knife(
                         let mut buf = Vec::new();
                         let mut last_pct = -1;
                         let mut last_done_count = 0usize;
+                        
                         let pct_re = Regex::new(r"(\d{1,3})\s*%").ok();
                         let count_re = Regex::new(r"(\d+)\s*/\s*(\d+)").ok();
 
@@ -328,36 +341,36 @@ fn run_xray_knife(
                                     continue;
                                 }
 
-                                if clean_str.contains("Testing configs") && clean_str.contains('%') {
-                                    let mut should_emit = false;
-                                    if let Some(re) = &pct_re {
-                                        if let Some(cap) = re.captures(&clean_str) {
-                                            if let Ok(pct) = cap[1].parse::<i32>() {
-                                                if pct >= last_pct + progress_step || pct == 100 {
-                                                    last_pct = pct;
-                                                    should_emit = true;
+                                if clean_str.contains("Testing configs") {
+                                    let mut should_emit_progress = false;
+                                    if clean_str.contains('%') {
+                                        if let Some(re) = &pct_re {
+                                            if let Some(cap) = re.captures(&clean_str) {
+                                                if let Ok(pct) = cap[1].parse::<i32>() {
+                                                    if pct >= last_pct + progress_step || pct == 100 {
+                                                        last_pct = pct;
+                                                        should_emit_progress = true;
+                                                    }
                                                 }
                                             }
                                         }
-                                    }
-                                    if let Some(re) = &count_re {
-                                        if let Some(cap) = re.captures(&clean_str) {
-                                            if let (Ok(d), Ok(t)) = (cap[1].parse::<usize>(), cap[2].parse::<usize>()) {
-                                                let min_step = (t / 20).max(1);
-                                                if d >= last_done_count.saturating_add(min_step) || d == t {
-                                                    last_done_count = d;
-                                                    should_emit = true;
+                                        if let Some(re) = &count_re {
+                                            if let Some(cap) = re.captures(&clean_str) {
+                                                if let (Ok(d), Ok(t)) = (cap[1].parse::<usize>(), cap[2].parse::<usize>()) {
+                                                    let min_step = (t / 20).max(1);
+                                                    if d >= last_done_count.saturating_add(min_step) || d == t {
+                                                        last_done_count = d;
+                                                        should_emit_progress = true;
+                                                    }
                                                 }
                                             }
                                         }
                                     }
 
-                                    if should_emit {
-                                        // نمایش دقیق رشته لاگ ابزار
+                                    if should_emit_progress {
                                         let _ = tx_clone.send(AppEvent::Log(LogLevel::Debug, clean_str));
                                     }
                                 } else {
-                                    // نمایش هدرها و متن‌های پیش‌فرض لاگ
                                     let _ = tx_clone.send(AppEvent::Log(LogLevel::Debug, clean_str));
                                 }
                             } else {
@@ -399,7 +412,19 @@ fn run_xray_knife(
                 }
             }
 
-            let success = child.wait().map(|s| s.success()).unwrap_or(false);
+            // حلقه هوشمند برای انتظار و گوش دادن به فرمان توقف
+            let success = loop {
+                if stop_flag.load(Ordering::SeqCst) {
+                    let _ = child.kill(); // از بین بردن آنی پروسس
+                    let _ = child.wait();
+                    break false;
+                }
+                if let Ok(Some(status)) = child.try_wait() {
+                    break status.success();
+                }
+                thread::sleep(Duration::from_millis(200));
+            };
+            
             is_running.store(false, Ordering::SeqCst);
             success
         }
@@ -689,6 +714,10 @@ pub fn filter_working_configs(
 
     let debug_dir = "Debug_Raw_CSVs";
     let _ = fs::create_dir_all(debug_dir);
+    
+    // پاکسازی فایل خروجی زنده در شروع چرخه
+    let live_txt_path = std::env::current_dir().unwrap_or_default().join("Live_Working_Configs.txt");
+    let _ = fs::write(&live_txt_path, "");
 
     log_worker(
         &tx,
@@ -700,6 +729,12 @@ pub fn filter_working_configs(
             tester_cfg.speed_test_enabled,
             tester_cfg.speed_test_from_ping_passed_only
         ),
+    );
+    
+    log_worker(
+        &tx,
+        LogLevel::Info,
+        "📄 Live results will be saved in real-time to 'Live_Working_Configs.txt'".to_string(),
     );
 
     let input_path = build_temp_path("configs_for_test.txt");
@@ -767,7 +802,7 @@ pub fn filter_working_configs(
             format!("📍 Phase2/PING start -> {}", tester_cfg.ping_test_url),
         );
 
-        if run_xray_knife(tester_cfg, &args, &ping_csv, &tx) {
+        if run_xray_knife(tester_cfg, &args, &ping_csv, &tx, stop_flag.clone()) {
             let _ = fs::copy(&ping_csv, format!("{}/ping_raw.csv", debug_dir));
 
             let mut all_ping_results = parse_csv_results(&ping_csv);
@@ -795,7 +830,7 @@ pub fn filter_working_configs(
             log_worker(
                 &tx,
                 LogLevel::Error,
-                "❌ Ping test failed to execute.".to_string(),
+                "❌ Ping test failed to execute or was interrupted.".to_string(),
             );
         }
         let _ = fs::remove_file(&ping_csv);
@@ -929,7 +964,10 @@ pub fn filter_working_configs(
                 format!("🚀 Phase2/SPEED start -> {}", speed_url),
             );
 
-            if run_xray_knife(tester_cfg, &args, &speed_csv, &tx) {
+            // در شروع اسپید تست دوباره فایل لایو رو پاک میکنیم تا خروجی‌های سرعت رو توش بنویسه
+            let _ = fs::write(&live_txt_path, "");
+
+            if run_xray_knife(tester_cfg, &args, &speed_csv, &tx, stop_flag.clone()) {
                 let _ = fs::copy(&speed_csv, format!("{}/speed_raw.csv", debug_dir));
 
                 let mut parsed_speed = parse_csv_results(&speed_csv);
@@ -953,7 +991,7 @@ pub fn filter_working_configs(
                 log_worker(
                     &tx,
                     LogLevel::Warning,
-                    "⚠️ Speed test failed to execute.".to_string(),
+                    "⚠️ Speed test failed to execute or was interrupted.".to_string(),
                 );
             }
 
