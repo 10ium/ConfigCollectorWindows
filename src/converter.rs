@@ -29,9 +29,9 @@ fn normalize_base64(v: &str) -> Option<String> {
     String::from_utf8(decoded).ok()
 }
 
-/// رمزگشایی استاندارد کاراکترهای درصد گذاری شده (Percent-Decoding) برای نمایش صحیح اموجی‌ها و متون یونیکد
+/// دکدر درصد فوق هوشمند و چندبایتی (Multi-byte UTF-8) برای نمایش بی‌نقص اموجی‌ها و متون خاص در تبدیل کلش
 fn safe_decode(s: &str) -> String {
-    let mut out = String::new();
+    let mut bytes = Vec::new();
     let mut chars = s.chars().peekable();
     while let Some(c) = chars.next() {
         if c == '%' {
@@ -43,19 +43,19 @@ fn safe_decode(s: &str) -> String {
                 hex.push(h2);
             }
             if let Ok(byte) = u8::from_str_radix(&hex, 16) {
-                out.push(byte as char);
+                bytes.push(byte);
             } else {
-                out.push('%');
-                out.push_str(&hex);
+                bytes.extend_from_slice(b"%");
+                bytes.extend_from_slice(hex.as_bytes());
             }
         } else if c == '+' {
-            out.push(' ');
+            bytes.push(b' ');
         } else {
-            out.push(c);
+            let mut buf = [0; 4];
+            bytes.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
         }
     }
-    // پاکسازی فاصله‌های اضافی احتمالی در ابتدا و انتها
-    out.trim().to_string()
+    String::from_utf8_lossy(&bytes).trim().to_string()
 }
 
 fn parse_vless(link: &str) -> Option<Value> {
@@ -311,7 +311,6 @@ fn apply_phase4_rules(mut proxies: Vec<Value>, cfg: &ClashConverterConfig) -> Ve
                         .to_uppercase()
                 });
 
-            // حذف پسوند لوله‌های اضافی خالی که ممکن است در انتهای رشته بعد از دکد شدن تگ ایجاد شود
             let mut clean_original_name = original_name;
             while clean_original_name.ends_with('|') || clean_original_name.ends_with(' ') {
                 let len = clean_original_name.len();
