@@ -13,6 +13,9 @@ pub const MEMORY_PATH: &str = "config/channel_memory.json";
 
 pub const DEFAULT_TARGETS: &str = "@AHWAZIConnect\n@AKLISvpn\n@AR14N24B\n@AzadNet\n@BahamestanAzadi\n@BugFreeNet\n@Capoit\n@Config724\n@DarcProxy\n@DirectVPN\n@Express_freevpn\n@Filter_breaker\n@Go_vpns\n@Gozarnetir\n@HOKM_AKHAR\n@Hiddify_Nexttt\n@IranProxyPlus\n@KIA_NET\n@KW1VPN\n@Khosrow_vpn\n@LagVPN\n@LetIranBreath\n@Lx3vpn\n@MARAMBASHI\n@Masyakata\n@MatinSenPaii\n@Maznet\n@MerlinVpn\n@NetAccount\n@PathToArrive\n@PewezaVPN\n@PrivateVPNs\n@ProfxPsiphon\n@ProxyFa10\n@SOSkeyNET\n@SamnetInternet\n@ShadowProxy66\n@ShadowSocks_s\n@SorushVpn\n@Speeds_vpn1\n@V2ray20261\n@V2rayEnglish\n@V2raybazi\n@VPN_KING_V2RAY\n@Varkana0\n@Vpn_Sky\n@Vpn_m2s\n@Wpnfa\n@XV2RAY\n@acccrd\n@airdrop2033\n@allworldcfg\n@amir_webstudio\n@anty_filter\n@asrnovin_ir\n@chillguy_vpn\n@club_profsor\n@configfa\n@configraygan\n@filembad\n@free_fastvpn\n@free_netplus\n@freedom_soldiers1\n@freev2config\n@habsiop\n@hacknashidd\n@hamedvpns\n@i10VPN\n@iVPN26\n@irFreeProxy\n@irazadd\n@irdnstt\n@isprox\n@llFreak\n@meliproxyy\n@mindism\n@mypremium98\n@net_cir\n@our_time_is_now\n@persianvpnhub\n@proxy_kafee\n@proxy_online_net\n@prrofile_purple\n@saministamm\n@sinavm\n@tel_melli\n@v2FreeHub\n@v2nodes\n@vasl_bashim\n@vaslbashi\n@vmessorg\n@wiki_tajrobe\n@xsfilternet\n@yebekhe\n@zede_filteri";
 
+/// لیست ۱۵ لینک اشتراک پیش‌فرض اعلام شده توسط شما
+pub const DEFAULT_SUBSCRIPTIONS: &str = "https://raw.githubusercontent.com/10Dream/VpnClashFaCollector/refs/heads/main/sub/all/mixed.txt\nhttps://raw.githubusercontent.com/mahsanet/MahsaFreeConfig/refs/heads/main/mci/sub_1.txt\nhttps://raw.githubusercontent.com/mahsanet/MahsaFreeConfig/refs/heads/main/mci/sub_2.txt\nhttps://raw.githubusercontent.com/mahsanet/MahsaFreeConfig/refs/heads/main/mci/sub_3.txt\nhttps://raw.githubusercontent.com/mahsanet/MahsaFreeConfig/refs/heads/main/mci/sub_4.txt\nhttps://raw.githubusercontent.com/mahsanet/MahsaFreeConfig/refs/heads/main/mtn/sub_1.txt\nhttps://raw.githubusercontent.com/mahsanet/MahsaFreeConfig/refs/heads/main/mtn/sub_2.txt\nhttps://raw.githubusercontent.com/mahsanet/MahsaFreeConfig/refs/heads/main/mtn/sub_3.txt\nhttps://raw.githubusercontent.com/mahsanet/MahsaFreeConfig/refs/heads/main/mtn/sub_4.txt\nhttps://raw.githubusercontent.com/MahsaNetConfigTopic/config/refs/heads/main/xray_final.txt\nhttps://raw.githubusercontent.com/roosterkid/openproxylist/refs/heads/main/V2RAY_RAW.txt\nhttps://raw.githubusercontent.com/10ium/HiN-VPN/main/subscription/normal/mix\nhttps://github.com/10ium/VpnClashFaCollector/blob/main/sub/tested/ping_passed.txt\nhttps://github.com/10ium/multi-proxy-config-fetcher/blob/main/configs/proxy_configs.txt\nhttps://github.com/10ium/V2RayAggregator/blob/master/Eternity.txt";
+
 pub const DEFAULT_PROTOCOLS: [&str; 27] = [
     "vmess",
     "vless",
@@ -123,27 +126,27 @@ pub struct TesterConfig {
 }
 
 impl Default for TesterConfig {
-    /// پیش‌فرض بهینه شرایط عادی (Normal Conditions) الهام‌گرفته از لاگ خروجی موفق شما
+    /// تنظیمات پیش‌فرض پروفایل نرمال منطبق بر مقادیر عکس ارسالی شما
     fn default() -> Self {
         Self {
             enabled: true,
-            concurrent_tests: 50, // بر اساس لاگ شما
+            concurrent_tests: 50,
 
             core_type: "auto".to_string(),
-            max_delay_ms: 5000,   // بر اساس لاگ شما (۵ ثانیه)
-            retries: 1,           // بر اساس لاگ شما
-            resolve_real_ip: true,// بر اساس لاگ شما (IP Info: true)
+            max_delay_ms: 5000,
+            retries: 1,
+            resolve_real_ip: false, // غیرفعال در عکس (تیک نخورده)
 
-            timeout_secs: 10,
-            test_url: "https://cloudflare.com/cdn-cgi/trace".to_string(), // بر اساس لاگ شما
+            timeout_secs: 6, // طبق فیلد Timeout در عکس شما برابر 6 ثانیه است
+            test_url: "https://cloudflare.com/cdn-cgi/trace".to_string(),
 
             ping_test_enabled: true,
-            ping_test_url: "https://cloudflare.com/cdn-cgi/trace".to_string(), // بر اساس لاگ شما
-            ping_url_preset: 4,
+            ping_test_url: "https://cloudflare.com/cdn-cgi/trace".to_string(),
+            ping_url_preset: 4, // Cloudflare trace
 
             speed_test_enabled: false,
             speed_test_url: "https://speed.cloudflare.com/__down".to_string(),
-            speed_url_preset: 0,
+            speed_url_preset: 0, // Custom
             speed_url_supports_bytes_query: true,
 
             speed_test_amount_kb: 5000, 
@@ -151,9 +154,9 @@ impl Default for TesterConfig {
             speed_test_batch_size: 10,
             speed_test_timeout_secs: 10,
 
-            append_ping_flag: true,
-            append_speed_flag: true,
-            append_country_flag: true,
+            append_ping_flag: true, // تیک خورده در عکس
+            append_speed_flag: false, // تیک نخورده در عکس
+            append_country_flag: true, // تیک خورده در عکس
             speed_test_from_ping_passed_only: false,
 
             extra_xray_args: "".to_string(),
@@ -162,35 +165,49 @@ impl Default for TesterConfig {
             } else {
                 "xray-knife".to_string()
             },
-            allow_insecure: false, // بر اساس لاگ شما (Insecure TLS: false)
+            allow_insecure: true, // تیک خورده در عکس (Allow Insecure TLS)
             xray_verbose_logs: false,
-            show_xray_window_on_windows: true,
+            show_xray_window_on_windows: true, // تیک خورده در عکس
             progress_log_step_percent: 2,
             
-            notify_on_found: false,
-            beep_on_found: false,
+            notify_on_found: true, // تیک خورده در عکس
+            beep_on_found: true, // تیک خورده در عکس
         }
     }
 }
 
 impl TesterConfig {
-    /// اعمال دستی تنظیمات شرایط عادی (منطبق با لاگ موفق)
+    /// تابع بازنشانی آنی تستر به شرایط پیش‌فرض نرمال مطابق با جزئیات دقیق اسکرین شات شما
     pub fn apply_normal_preset(&mut self) {
         self.concurrent_tests = 50;
         self.max_delay_ms = 5000;
         self.retries = 1;
-        self.resolve_real_ip = true;
-        self.timeout_secs = 10;
+        self.resolve_real_ip = false;
+        self.timeout_secs = 6;
         self.test_url = "https://cloudflare.com/cdn-cgi/trace".to_string();
         self.ping_test_url = "https://cloudflare.com/cdn-cgi/trace".to_string();
         self.ping_url_preset = 4;
-        self.allow_insecure = false;
+        self.speed_test_enabled = false;
+        self.speed_test_url = "https://speed.cloudflare.com/__down".to_string();
+        self.speed_url_preset = 0;
+        self.speed_url_supports_bytes_query = true;
+        self.speed_test_amount_kb = 5000;
+        self.speed_test_batch_size = 10;
+        self.speed_test_timeout_secs = 10;
+        self.speed_test_top_count = 300;
+        self.allow_insecure = true;
+        self.show_xray_window_on_windows = true;
+        self.append_ping_flag = true;
+        self.append_speed_flag = false;
+        self.append_country_flag = true;
+        self.notify_on_found = true;
+        self.beep_on_found = true;
     }
 
     /// اعمال دستی تنظیمات شرایط حاد (پروفایل سنگین قدیمی)
     pub fn apply_extreme_preset(&mut self) {
         self.concurrent_tests = 100;
-        self.max_delay_ms = 30000; // ۳۰ ثانیه تاخیر مجاز
+        self.max_delay_ms = 30000;
         self.retries = 2;
         self.resolve_real_ip = true;
         self.timeout_secs = 60;
