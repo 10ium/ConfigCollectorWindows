@@ -1,6 +1,6 @@
 [package]
 name = "config-collector-windows"
-version = "0.2.0"
+version = "2.0.59"
 edition = "2021"
 authors = ["Your Name <youremail@example.com>"]
 description = "Telegram Config Collector Pro Phase 2"
