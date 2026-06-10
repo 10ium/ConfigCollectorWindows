@@ -16,6 +16,8 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # واکشی تمام هسیتوری جهت اجازه کامیت تغییرات ورژن به برنچ
 
       # این بخش به صورت هوشمند تصمیم می‌گیرد که چه تگی برای ریلیز بسازد
       - name: Determine Release Tag
@@ -32,10 +34,32 @@ jobs:
           echo "TAG_NAME=$TAG_NAME" >> $GITHUB_OUTPUT
           echo "Generated Tag: $TAG_NAME"
 
+      # اضافه کردن همگام‌ساز خودکار شماره نسخه کارگو منطبق بر تگ تولیدی
+      - name: Update Cargo.toml Version Automatically
+        shell: bash
+        run: |
+          TAG_NAME="${{ steps.generate_tag.outputs.TAG_NAME }}"
+          # حذف حرف v از ابتدای تگ برای درج نسخه پاکیزه عددی در کارگو
+          CLEAN_VERSION="${TAG_NAME#v}"
+          sed -i "s/^version = \".*\"/version = \"$CLEAN_VERSION\"/" Cargo.toml
+          echo "Cargo.toml version updated to: $CLEAN_VERSION"
+
+      # ثبت و کامیت خودکار تغییر نسخه در سورس گیت‌هاب با مکانیزم ضد تداخل (Fail-Safe)
+      - name: Commit Updated Cargo.toml to Repo
+        shell: bash
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add Cargo.toml
+          git commit -m "chore: bump package version to ${{ steps.generate_tag.outputs.TAG_NAME }} [skip ci]" || echo "No changes to commit"
+          git push origin HEAD:main || echo "Push skipped (e.g. branch protection or manual run on tag branch)"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Install Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      # اضافه کردن سیستم کش برای افزایش چشمگیر سرعت بیلد در اجراهای بعدی
+      # سیستم کش هوشمند برای افزایش چشمگیر سرعت بیلد در اجراهای بعدی
       - name: Cache Rust Dependencies
         uses: Swatinem/rust-cache@v2
 
