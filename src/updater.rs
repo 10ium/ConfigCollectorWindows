@@ -3,6 +3,7 @@ use reqwest::blocking::Client;
 use serde_json::Value;
 use std::fs::{self, File};
 use std::io::{self, Cursor, Read};
+use std::path::Path;
 use std::sync::mpsc::Sender;
 
 use crate::scraper::{AppEvent, LogLevel};
@@ -120,7 +121,7 @@ pub fn update_main_app(client: Client, repo_name: String, tx: Sender<AppEvent>) 
     Ok(())
 }
 
-/// دانلود و استخراج مستقیم xray-knife (نسخه ویندوز) روی دیسک
+/// دانلود، اعتبارسنجی آفلاین نسخه و استخراج مستقیم xray-knife (نسخه ویندوز) روی دیسک
 pub fn update_xray_knife(client: Client, target_path: String, tx: Sender<AppEvent>) -> Result<()> {
     log_updater(
         &tx,
@@ -129,8 +130,27 @@ pub fn update_xray_knife(client: Client, target_path: String, tx: Sender<AppEven
     );
 
     let api_url = "https://api.github.com/repos/lilendian0x00/xray-knife/releases/latest";
-
     let resp: Value = client.get(api_url).send()?.json()?;
+
+    let version_tag = resp["tag_name"].as_str().unwrap_or("Unknown").to_string();
+
+    // ردیاب آفلاین و محلی فایل نسخه هسته
+    let version_file_path = "config/xray_knife_version.txt";
+    if Path::new(&target_path).exists() && Path::new(version_file_path).exists() {
+        if let Ok(local_version) = fs::read_to_string(version_file_path) {
+            if local_version.trim() == version_tag.trim() {
+                log_updater(
+                    &tx,
+                    LogLevel::Success,
+                    format!(
+                        "✅ xray-knife.exe is already up-to-date (Version: {}). No download required.",
+                        version_tag
+                    ),
+                );
+                return Ok(());
+            }
+        }
+    }
 
     let assets = resp["assets"]
         .as_array()
@@ -155,7 +175,7 @@ pub fn update_xray_knife(client: Client, target_path: String, tx: Sender<AppEven
     log_updater(
         &tx,
         LogLevel::Info,
-        format!("📥 Downloading package: {}", url),
+        format!("📥 Downloading package: {} (Tag: {})", url, version_tag),
     );
 
     let mut response = client.get(&url).send()?;
@@ -197,10 +217,19 @@ pub fn update_xray_knife(client: Client, target_path: String, tx: Sender<AppEven
         ));
     }
 
+    // نوشتن موفق فایل نسخه روی سیستم کاربر جهت ردیابی آفلاین در اجراهای بعدی
+    if let Some(parent) = Path::new(version_file_path).parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let _ = fs::write(version_file_path, &version_tag);
+
     log_updater(
         &tx,
         LogLevel::Success,
-        "✅ xray-knife.exe updated/downloaded and saved to disk successfully!".to_string(),
+        format!(
+            "✅ xray-knife.exe updated/downloaded and saved to disk successfully! (Version: {})",
+            version_tag
+        ),
     );
     Ok(())
 }
