@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use std::thread;
-use std::time::{Instant, SystemTime, UNIX_EPOCH, Duration};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -72,8 +72,9 @@ fn percent_encode(s: &str) -> String {
     out
 }
 
+/// دکدر درصد هوشمند و چندبایتی (Multi-byte UTF-8) برای جلوگیری از خرابی اموجی‌ها، پرچم‌ها و متون خاص زبان‌ها
 fn percent_decode(s: &str) -> String {
-    let mut out = String::new();
+    let mut bytes = Vec::new();
     let mut chars = s.chars().peekable();
     while let Some(c) = chars.next() {
         if c == '%' {
@@ -85,18 +86,19 @@ fn percent_decode(s: &str) -> String {
                 hex.push(h2);
             }
             if let Ok(byte) = u8::from_str_radix(&hex, 16) {
-                out.push(byte as char);
+                bytes.push(byte);
             } else {
-                out.push('%');
-                out.push_str(&hex);
+                bytes.extend_from_slice(b"%");
+                bytes.extend_from_slice(hex.as_bytes());
             }
         } else if c == '+' {
-            out.push(' ');
+            bytes.push(b' ');
         } else {
-            out.push(c);
+            let mut buf = [0; 4];
+            bytes.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
         }
     }
-    out
+    String::from_utf8_lossy(&bytes).into_owned()
 }
 
 fn rename_config(
@@ -148,7 +150,8 @@ fn rename_config(
             if let Ok(decoded) = B64.decode(base64_part) {
                 if let Ok(mut json) = serde_json::from_slice::<Value>(&decoded) {
                     if let Some(obj) = json.as_object_mut() {
-                        let old_ps = obj.get("ps").and_then(|v| v.as_str()).unwrap_or("Server");
+                        let old_ps_raw = obj.get("ps").and_then(|v| v.as_str()).unwrap_or("Server");
+                        let old_ps = percent_decode(old_ps_raw);
                         obj.insert(
                             "ps".to_string(),
                             Value::String(format!("{}{}", tag_with_sep, old_ps)),
@@ -189,7 +192,7 @@ fn strip_ansi(s: &str) -> String {
     cleaned.trim().to_string()
 }
 
-// تولید صدا و نوتیفیکیشن بدون نیاز به پکیج‌های خارجی و از طریق Powershell پنهان
+// تولید صدا و نوتیفیکیشن
 fn trigger_alert(beep: bool, notify: bool) {
     if beep {
         thread::spawn(|| {
@@ -256,7 +259,6 @@ fn run_xray_knife(
         Ok(mut child) => {
             let is_running = Arc::new(AtomicBool::new(true));
             
-            // ترد ناظر هوشمند (جهت ایجاد خروجی در لحظه و آلارم دهی)
             let is_running_csv = is_running.clone();
             let csv_path_str = csv_path.to_string();
             let tx_clone_csv = tx.clone();
@@ -272,7 +274,6 @@ fn run_xray_knife(
                 while is_running_csv.load(Ordering::SeqCst) {
                     let results = parse_csv_results(&csv_path_str);
                     
-                    // فقط کانفیگ‌هایی که واقعاً سالم هستند (دیلی یا سرعت دارند)
                     let valid_results: Vec<_> = results.into_iter()
                         .filter(|r| r.delay_ms.is_some() || r.download_kb.unwrap_or(0.0) > 0.0)
                         .collect();
@@ -283,7 +284,6 @@ fn run_xray_knife(
                         let diff = valid_count - last_valid_count;
                         last_valid_count = valid_count;
                         
-                        // ساخت و بروزرسانی آنی فایل Live_Working_Configs.txt
                         let renamed_links: Vec<String> = valid_results.iter()
                             .map(|r| rename_config(&r.link, &tester_cfg_clone, r, None))
                             .collect();
@@ -294,7 +294,6 @@ fn run_xray_knife(
                             format!("🎉 Found {} new working config(s)! (Total: {}) -> Saved to Live_Working_Configs.txt", diff, valid_count)
                         ));
 
-                        // Rate Limiting برای جلوگیری از اسپم صدا و نوتیفیکیشن
                         if (beep || notify) && last_alert.elapsed().as_secs() >= 3 {
                             trigger_alert(beep, notify);
                             last_alert = Instant::now();
@@ -412,10 +411,9 @@ fn run_xray_knife(
                 }
             }
 
-            // حلقه هوشمند برای انتظار و گوش دادن به فرمان توقف
             let success = loop {
                 if stop_flag.load(Ordering::SeqCst) {
-                    let _ = child.kill(); // از بین بردن آنی پروسس
+                    let _ = child.kill();
                     let _ = child.wait();
                     break false;
                 }
@@ -715,7 +713,6 @@ pub fn filter_working_configs(
     let debug_dir = "Debug_Raw_CSVs";
     let _ = fs::create_dir_all(debug_dir);
     
-    // پاکسازی فایل خروجی زنده در شروع چرخه
     let live_txt_path = std::env::current_dir().unwrap_or_default().join("Live_Working_Configs.txt");
     let _ = fs::write(&live_txt_path, "");
 
@@ -964,7 +961,6 @@ pub fn filter_working_configs(
                 format!("🚀 Phase2/SPEED start -> {}", speed_url),
             );
 
-            // در شروع اسپید تست دوباره فایل لایو رو پاک میکنیم تا خروجی‌های سرعت رو توش بنویسه
             let _ = fs::write(&live_txt_path, "");
 
             if run_xray_knife(tester_cfg, &args, &speed_csv, &tx, stop_flag.clone()) {
