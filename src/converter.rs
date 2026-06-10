@@ -29,8 +29,33 @@ fn normalize_base64(v: &str) -> Option<String> {
     String::from_utf8(decoded).ok()
 }
 
+/// رمزگشایی استاندارد کاراکترهای درصد گذاری شده (Percent-Decoding) برای نمایش صحیح اموجی‌ها و متون یونیکد
 fn safe_decode(s: &str) -> String {
-    s.to_string()
+    let mut out = String::new();
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '%' {
+            let mut hex = String::new();
+            if let Some(h1) = chars.next() {
+                hex.push(h1);
+            }
+            if let Some(h2) = chars.next() {
+                hex.push(h2);
+            }
+            if let Ok(byte) = u8::from_str_radix(&hex, 16) {
+                out.push(byte as char);
+            } else {
+                out.push('%');
+                out.push_str(&hex);
+            }
+        } else if c == '+' {
+            out.push(' ');
+        } else {
+            out.push(c);
+        }
+    }
+    // پاکسازی فاصله‌های اضافی احتمالی در ابتدا و انتها
+    out.trim().to_string()
 }
 
 fn parse_vless(link: &str) -> Option<Value> {
@@ -89,7 +114,7 @@ fn parse_vmess(link: &str) -> Option<Value> {
     let decoded = normalize_base64(raw)?;
     let j: Value = serde_json::from_str(&decoded).ok()?;
     Some(json!({
-        "name": j.get("ps").and_then(|v| v.as_str()).unwrap_or(j.get("add").and_then(|v| v.as_str()).unwrap_or("vmess")),
+        "name": j.get("ps").and_then(|v| v.as_str()).map(|s| safe_decode(s)).unwrap_or(j.get("add").and_then(|v| v.as_str()).unwrap_or("vmess").to_string()),
         "type": "vmess",
         "server": j.get("add").and_then(|v| v.as_str()).unwrap_or(""),
         "port": j.get("port").and_then(|v| v.as_str()).and_then(|p| p.parse::<u16>().ok()).unwrap_or(443),
@@ -130,8 +155,10 @@ fn parse_trojan(link: &str) -> Option<Value> {
 fn parse_ss(link: &str) -> Option<Value> {
     let raw = link.trim_start_matches("ss://");
     let mut base = raw;
-    if let Some((b, _)) = raw.split_once('#') {
+    let mut tag = String::new();
+    if let Some((b, t)) = raw.split_once('#') {
         base = b;
+        tag = safe_decode(t);
     }
     let (method, password, server, port) = if base.contains('@') {
         let (auth, host) = base.split_once('@')?;
@@ -156,8 +183,9 @@ fn parse_ss(link: &str) -> Option<Value> {
             po.parse::<u16>().ok()?,
         )
     };
+    let display_name = if tag.is_empty() { server.clone() } else { tag };
     Some(
-        json!({"name": server, "type": "ss", "server": server, "port": port, "cipher": method, "password": password, "udp": true}),
+        json!({"name": display_name, "type": "ss", "server": server, "port": port, "cipher": method, "password": password, "udp": true}),
     )
 }
 
@@ -268,7 +296,6 @@ fn apply_phase4_rules(mut proxies: Vec<Value>, cfg: &ClashConverterConfig) -> Ve
         }
     }
 
-    // تصحیح فوق هوشمند نام‌گذاری پروکسی‌ها: حفظ کامل نام اصلی و اختصاص شماره افزایشی تنها در صورت تکراری بودن
     let mut seen_names: BTreeMap<String, usize> = BTreeMap::new();
     for p in &mut out {
         if let Some(obj) = p.as_object_mut() {
@@ -284,12 +311,21 @@ fn apply_phase4_rules(mut proxies: Vec<Value>, cfg: &ClashConverterConfig) -> Ve
                         .to_uppercase()
                 });
 
-            let final_name = if let Some(count) = seen_names.get_mut(&original_name) {
+            // حذف پسوند لوله‌های اضافی خالی که ممکن است در انتهای رشته بعد از دکد شدن تگ ایجاد شود
+            let mut clean_original_name = original_name;
+            while clean_original_name.ends_with('|') || clean_original_name.ends_with(' ') {
+                let len = clean_original_name.len();
+                if len == 0 { break; }
+                clean_original_name.truncate(len - 1);
+            }
+            let clean_original_name = clean_original_name.trim().to_string();
+
+            let final_name = if let Some(count) = seen_names.get_mut(&clean_original_name) {
                 *count += 1;
-                format!("{}-{}", original_name, count)
+                format!("{}-{}", clean_original_name, count)
             } else {
-                seen_names.insert(original_name.clone(), 0);
-                original_name
+                seen_names.insert(clean_original_name.clone(), 0);
+                clean_original_name
             };
 
             obj.insert("name".into(), json!(final_name));
