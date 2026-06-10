@@ -268,17 +268,31 @@ fn apply_phase4_rules(mut proxies: Vec<Value>, cfg: &ClashConverterConfig) -> Ve
         }
     }
 
-    let mut naming: BTreeMap<String, usize> = BTreeMap::new();
+    // تصحیح فوق هوشمند نام‌گذاری پروکسی‌ها: حفظ کامل نام اصلی و اختصاص شماره افزایشی تنها در صورت تکراری بودن
+    let mut seen_names: BTreeMap<String, usize> = BTreeMap::new();
     for p in &mut out {
-        let t = p
-            .get("type")
-            .and_then(|v| v.as_str())
-            .unwrap_or("proxy")
-            .to_string();
-        let n = naming.entry(t.clone()).or_insert(0);
-        *n += 1;
         if let Some(obj) = p.as_object_mut() {
-            obj.insert("name".into(), json!(format!("{} {}", t, n)));
+            let original_name = obj
+                .get("name")
+                .and_then(|v| v.as_str())
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| {
+                    obj.get("type")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("PROXY")
+                        .to_uppercase()
+                });
+
+            let final_name = if let Some(count) = seen_names.get_mut(&original_name) {
+                *count += 1;
+                format!("{}-{}", original_name, count)
+            } else {
+                seen_names.insert(original_name.clone(), 0);
+                original_name
+            };
+
+            obj.insert("name".into(), json!(final_name));
         }
     }
 
