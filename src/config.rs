@@ -118,27 +118,27 @@ pub struct TesterConfig {
     pub show_xray_window_on_windows: bool,
     pub progress_log_step_percent: u8,
     
-    // قابلیت های جدید اضافه شده
     pub notify_on_found: bool,
     pub beep_on_found: bool,
 }
 
 impl Default for TesterConfig {
+    /// پیش‌فرض بهینه شرایط عادی (Normal Conditions) الهام‌گرفته از لاگ خروجی موفق شما
     fn default() -> Self {
         Self {
             enabled: true,
-            concurrent_tests: 50,
+            concurrent_tests: 50, // بر اساس لاگ شما
 
             core_type: "auto".to_string(),
-            max_delay_ms: 30000,
-            retries: 1,
-            resolve_real_ip: true,
+            max_delay_ms: 5000,   // بر اساس لاگ شما (۵ ثانیه)
+            retries: 1,           // بر اساس لاگ شما
+            resolve_real_ip: true,// بر اساس لاگ شما (IP Info: true)
 
-            timeout_secs: 60,
-            test_url: "https://telegram.org/".to_string(),
+            timeout_secs: 10,
+            test_url: "https://cloudflare.com/cdn-cgi/trace".to_string(), // بر اساس لاگ شما
 
             ping_test_enabled: true,
-            ping_test_url: "https://telegram.org/favicon.ico".to_string(),
+            ping_test_url: "https://cloudflare.com/cdn-cgi/trace".to_string(), // بر اساس لاگ شما
             ping_url_preset: 4,
 
             speed_test_enabled: false,
@@ -162,15 +162,42 @@ impl Default for TesterConfig {
             } else {
                 "xray-knife".to_string()
             },
-            allow_insecure: true,
+            allow_insecure: false, // بر اساس لاگ شما (Insecure TLS: false)
             xray_verbose_logs: false,
             show_xray_window_on_windows: true,
             progress_log_step_percent: 2,
             
-            // پیش‌فرض قابلیت‌های جدید
             notify_on_found: false,
             beep_on_found: false,
         }
+    }
+}
+
+impl TesterConfig {
+    /// اعمال دستی تنظیمات شرایط عادی (منطبق با لاگ موفق)
+    pub fn apply_normal_preset(&mut self) {
+        self.concurrent_tests = 50;
+        self.max_delay_ms = 5000;
+        self.retries = 1;
+        self.resolve_real_ip = true;
+        self.timeout_secs = 10;
+        self.test_url = "https://cloudflare.com/cdn-cgi/trace".to_string();
+        self.ping_test_url = "https://cloudflare.com/cdn-cgi/trace".to_string();
+        self.ping_url_preset = 4;
+        self.allow_insecure = false;
+    }
+
+    /// اعمال دستی تنظیمات شرایط حاد (پروفایل سنگین قدیمی)
+    pub fn apply_extreme_preset(&mut self) {
+        self.concurrent_tests = 100;
+        self.max_delay_ms = 30000; // ۳۰ ثانیه تاخیر مجاز
+        self.retries = 2;
+        self.resolve_real_ip = true;
+        self.timeout_secs = 60;
+        self.test_url = "https://telegram.org/".to_string();
+        self.ping_test_url = "https://telegram.org/favicon.ico".to_string();
+        self.ping_url_preset = 1;
+        self.allow_insecure = true;
     }
 }
 
@@ -376,28 +403,25 @@ impl AppConfig {
                 self.delay_ms = 5000;
                 self.timeout_secs = 30;
                 self.concurrent_channels = 1;
-                self.tester.concurrent_tests = 3;
+                self.tester.concurrent_tests = 20;
             }
             PerformanceProfile::MediumPC => {
                 self.delay_ms = 2000;
                 self.timeout_secs = 15;
                 self.concurrent_channels = 3;
-                self.tester.concurrent_tests = 10;
+                self.tester.concurrent_tests = 50;
             }
             PerformanceProfile::StrongPC => {
                 self.delay_ms = 500;
                 self.timeout_secs = 10;
                 self.concurrent_channels = 8;
-                self.tester.concurrent_tests = 25;
+                self.tester.concurrent_tests = 100;
             }
             PerformanceProfile::Custom => {}
         }
     }
 }
 
-// -------------------------------------------------------------
-// ساختار حافظه هوشمند (Smart Memory)
-// -------------------------------------------------------------
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ChannelMemory {
     pub last_seen_ids: BTreeMap<String, u64>,
