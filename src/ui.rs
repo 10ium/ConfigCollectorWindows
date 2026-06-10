@@ -44,7 +44,6 @@ impl AppState {
         let channels_text = fs::read_to_string(CHANNELS_PATH)
             .unwrap_or_else(|_| crate::config::DEFAULT_TARGETS.to_string());
 
-        // بارگذاری هوشمند لینک‌های اشتراک؛ در صورت عدم وجود یا خالی بودن، ۱۵ آدرس پیش‌فرض شما لود می‌شود
         let mut subscriptions_text = fs::read_to_string(SUBSCRIPTIONS_PATH).unwrap_or_default();
         if subscriptions_text.trim().is_empty() {
             subscriptions_text = crate::config::DEFAULT_SUBSCRIPTIONS.to_string();
@@ -58,7 +57,10 @@ impl AppState {
             logs: vec![LogMessage {
                 time: Local::now().format("%H:%M:%S").to_string(),
                 level: LogLevel::Info,
-                text: "🖥️ System Boot: Smart Modular Engine Initialized (Phase 5).".to_string(),
+                text: format!(
+                    "🖥️ System Boot: Smart Modular Engine Initialized (v{}).",
+                    env!("CARGO_PKG_VERSION")
+                ),
             }],
             total_configs: 0,
             by_protocol: BTreeMap::new(),
@@ -269,15 +271,18 @@ impl eframe::App for AppState {
                 ui.horizontal(|ui| {
                     ui.vertical(|ui| {
                         ui.label(
-                            egui::RichText::new("⚡ Telegram Config Collector")
+                            egui::RichText::new("⚡ Freedom Config Collector")
                                 .size(28.0)
                                 .strong()
                                 .color(egui::Color32::from_rgb(240, 248, 255)),
                         );
                         ui.label(
-                            egui::RichText::new("Modular Smart Engine - Phase 5")
-                                .size(13.0)
-                                .color(egui::Color32::from_rgb(120, 140, 160)),
+                            egui::RichText::new(format!(
+                                "Modular Smart Engine - v{}",
+                                env!("CARGO_PKG_VERSION")
+                            ))
+                            .size(13.0)
+                            .color(egui::Color32::from_rgb(120, 140, 160)),
                         );
                         ui.hyperlink_to("📣 Channel: @vpnclashfa", "https://t.me/vpnclashfa");
                     });
@@ -574,7 +579,7 @@ impl eframe::App for AppState {
                             }
                         }
                         2 => {
-                            ui.heading(egui::RichText::new("🎯 Phase 1 Protocols Filter").color(egui::Color32::LIGHT_BLUE));
+                            ui.heading(egui::RichText::new("🎯 Protocols Filter").color(egui::Color32::LIGHT_BLUE));
                             ui.label(egui::RichText::new("Set Max Count to 0 for UNLIMITED").small().color(egui::Color32::GRAY));
 
                             for (name, rule) in &mut self.config.protocol_rules {
@@ -593,8 +598,8 @@ impl eframe::App for AppState {
                             ui.add_space(12.0);
                             ui.separator();
                             ui.add_space(8.0);
-                            ui.heading(egui::RichText::new("🧩 Phase 4 - Clash Output Controls").color(egui::Color32::GOLD));
-                            ui.checkbox(&mut self.config.clash_converter.enabled, "Enable Phase 3->4 Clash conversion output");
+                            ui.heading(egui::RichText::new("🧩 Clash Output Controls").color(egui::Color32::GOLD));
+                            ui.checkbox(&mut self.config.clash_converter.enabled, "Enable Clash conversion output");
                             ui.checkbox(&mut self.config.clash_converter.output_full_config, "Output full Clash config (otherwise provider only)");
                             ui.horizontal(|ui| {
                                 ui.label("Total convert limit (0=unlimited):");
@@ -612,7 +617,7 @@ impl eframe::App for AppState {
                             }
                         }
                         3 => {
-                            ui.heading(egui::RichText::new("🔬 Phase 2 Tester Engine").color(egui::Color32::LIGHT_BLUE));
+                            ui.heading(egui::RichText::new("🔬 Tester Engine").color(egui::Color32::LIGHT_BLUE));
                             ui.label(egui::RichText::new("Validates scraped configs via xray-knife in DIRECT mode.\nConfigure core behavior, pings, and speedtests below.").small().color(egui::Color32::GRAY));
                             ui.add_space(10.0);
 
@@ -856,12 +861,12 @@ impl eframe::App for AppState {
                         }
 
                         4 => {
-                            ui.heading(egui::RichText::new("📤 Phase 5 - Telegram Publisher").color(egui::Color32::LIGHT_BLUE));
+                            ui.heading(egui::RichText::new(format!("📤 Telegram Publisher (v{})", env!("CARGO_PKG_VERSION"))).color(egui::Color32::LIGHT_BLUE));
                             ui.label(egui::RichText::new("Sends output/tested/new_only/mixed.txt to your Telegram channel/group via bot API using app proxy settings.").small().color(egui::Color32::GRAY));
                             ui.label(egui::RichText::new("If you get chat not found: add bot to channel/group, grant post permission, then use @channelusername (public) or -100... id (private).").small().color(egui::Color32::from_rgb(250, 190, 70)));
                             ui.add_space(8.0);
 
-                            ui.checkbox(&mut self.config.phase5_telegram.enabled, "Enable Phase 5 Telegram Publish");
+                            ui.checkbox(&mut self.config.phase5_telegram.enabled, "Enable Telegram Publish");
                             ui.horizontal(|ui| {
                                 ui.label("Bot Token:");
                                 ui.text_edit_singleline(&mut self.config.phase5_telegram.bot_token);
