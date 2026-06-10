@@ -40,11 +40,20 @@ pub struct AppState {
 impl AppState {
     pub fn bootstrap() -> Self {
         let (tx, rx) = mpsc::channel();
+        
+        let channels_text = fs::read_to_string(CHANNELS_PATH)
+            .unwrap_or_else(|_| crate::config::DEFAULT_TARGETS.to_string());
+
+        // بارگذاری هوشمند لینک‌های اشتراک؛ در صورت عدم وجود یا خالی بودن، ۱۵ آدرس پیش‌فرض شما لود می‌شود
+        let mut subscriptions_text = fs::read_to_string(SUBSCRIPTIONS_PATH).unwrap_or_default();
+        if subscriptions_text.trim().is_empty() {
+            subscriptions_text = crate::config::DEFAULT_SUBSCRIPTIONS.to_string();
+        }
+
         let mut state = Self {
             config: AppConfig::load_or_create(),
-            channels_text: fs::read_to_string(CHANNELS_PATH)
-                .unwrap_or_else(|_| crate::config::DEFAULT_TARGETS.to_string()),
-            subscriptions_text: fs::read_to_string(SUBSCRIPTIONS_PATH).unwrap_or_default(),
+            channels_text,
+            subscriptions_text,
             active_tab: 0,
             logs: vec![LogMessage {
                 time: Local::now().format("%H:%M:%S").to_string(),
@@ -607,7 +616,6 @@ impl eframe::App for AppState {
                             ui.label(egui::RichText::new("Validates scraped configs via xray-knife in DIRECT mode.\nConfigure core behavior, pings, and speedtests below.").small().color(egui::Color32::GRAY));
                             ui.add_space(10.0);
 
-                            // کنترل پانل دکمه‌های سریع اعمال پروفایل تستر
                             egui::Frame::none()
                                 .fill(egui::Color32::from_rgb(30, 34, 48))
                                 .rounding(6.0)
