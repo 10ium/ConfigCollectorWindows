@@ -607,6 +607,32 @@ impl eframe::App for AppState {
                             ui.label(egui::RichText::new("Validates scraped configs via xray-knife in DIRECT mode.\nConfigure core behavior, pings, and speedtests below.").small().color(egui::Color32::GRAY));
                             ui.add_space(10.0);
 
+                            // کنترل پانل دکمه‌های سریع اعمال پروفایل تستر
+                            egui::Frame::none()
+                                .fill(egui::Color32::from_rgb(30, 34, 48))
+                                .rounding(6.0)
+                                .inner_margin(8.0)
+                                .show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.label(egui::RichText::new("⚙️ Quick Configs:").strong().color(egui::Color32::LIGHT_GRAY));
+                                        if ui.button(egui::RichText::new("🟢 Normal Profile").color(egui::Color32::GREEN))
+                                            .on_hover_text("Applies 5s delay, 50 threads, Cloudflare test URL and disables insecure certs.")
+                                            .clicked()
+                                        {
+                                            self.config.tester.apply_normal_preset();
+                                            self.add_log(LogLevel::Info, "Applied 'Normal Conditions' profile preset.".to_string());
+                                        }
+                                        if ui.button(egui::RichText::new("🔴 Severe Profile").color(egui::Color32::from_rgb(255, 120, 120)))
+                                            .on_hover_text("Applies 30s delay, 100 threads, Telegram host and enables insecure cert bypass.")
+                                            .clicked()
+                                        {
+                                            self.config.tester.apply_extreme_preset();
+                                            self.add_log(LogLevel::Warning, "Applied 'Severe Conditions' profile preset.".to_string());
+                                        }
+                                    });
+                                });
+
+                            ui.add_space(8.0);
                             ui.checkbox(&mut self.config.tester.enabled, "Enable Xray-Knife Tester");
 
                             egui::Frame::none()
@@ -672,7 +698,7 @@ impl eframe::App for AppState {
                                                 if ui.selectable_value(&mut self.config.tester.ping_url_preset, 1, "Telegram favicon").clicked() { self.config.tester.ping_test_url = "https://telegram.org/favicon.ico".to_string(); }
                                                 if ui.selectable_value(&mut self.config.tester.ping_url_preset, 2, "Telegram homepage").clicked() { self.config.tester.ping_test_url = "https://telegram.org/".to_string(); }
                                                 if ui.selectable_value(&mut self.config.tester.ping_url_preset, 3, "Google generate_204").clicked() { self.config.tester.ping_test_url = "https://www.gstatic.com/generate_204".to_string(); }
-                                                if ui.selectable_value(&mut self.config.tester.ping_url_preset, 4, "Cloudflare trace").clicked() { self.config.tester.ping_test_url = "https://1.1.1.1/cdn-cgi/trace".to_string(); }
+                                                if ui.selectable_value(&mut self.config.tester.ping_url_preset, 4, "Cloudflare trace").clicked() { self.config.tester.ping_test_url = "https://cloudflare.com/cdn-cgi/trace".to_string(); }
                                                 ui.selectable_value(&mut self.config.tester.ping_url_preset, 0, "Custom");
                                             });
                                     });
@@ -970,7 +996,6 @@ impl eframe::App for AppState {
                                         base_color
                                     };
                                     
-                                    // تغییر جدید برای جلوگیری از بیرون زدگی متن 
                                     ui.horizontal(|ui| {
                                         ui.label(
                                             egui::RichText::new(format!("[{}]", log.time))
