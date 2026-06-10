@@ -5,8 +5,9 @@ use crate::storage::{
     read_existing_set, write_files_standard, write_files_standard_append,
     write_flat_file_and_base64, write_flat_file_and_base64_append,
 };
-use crate::tester::filter_working_configs; // فراخوانی تستر پیشرفته
+use crate::tester::filter_working_configs; 
 use anyhow::Result;
+use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use regex::Regex;
 use reqwest::blocking::ClientBuilder;
@@ -112,6 +113,43 @@ pub fn apply_protocol_limits(
     }
 }
 
+/// تابع کمکی هوشمند برای تشخیص و دکد کردن خودکار سورس‌های لینک اشتراک (Base64 یا Plain Text)
+fn decode_subscription_content(raw_body: &str) -> String {
+    let trimmed = raw_body.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+
+    // اگر از قبل حاوی فرمت پروتکل‌ها باشد، یعنی خام است و نیازی به رمزگشایی نیست
+    if trimmed.contains("://") {
+        return raw_body.to_string();
+    }
+
+    // حذف فاصله‌ها و رفتن به خط بعدی که در استریم‌های Base64 متداول است
+    let cleaned_b64 = trimmed.replace(|c: char| c.is_whitespace(), "");
+
+    // بازسازی پدینگ استاندارد و دکد کردن Base64
+    let mut base = cleaned_b64;
+    let pad = base.len() % 4;
+    if pad == 2 {
+        base.push_str("==");
+    } else if pad == 3 {
+        base.push('=');
+    } else if pad == 1 {
+        return raw_body.to_string(); // فرمت بیس۶۴ نامعتبر است
+    }
+
+    if let Ok(decoded_bytes) = B64.decode(&base) {
+        if let Ok(decoded_str) = String::from_utf8(decoded_bytes) {
+            if decoded_str.contains("://") || decoded_str.lines().any(|l| !l.trim().is_empty()) {
+                return decoded_str;
+            }
+        }
+    }
+
+    raw_body.to_string()
+}
+
 pub fn run_worker(
     config: AppConfig,
     channels_raw: String,
@@ -189,176 +227,176 @@ pub fn run_worker(
                     let post_id_reg_c = post_id_regex.clone();
 
                     handles.push(thread::spawn(move || loop {
-                if stop_c.load(Ordering::SeqCst) {
-                    break;
-                }
+                        if stop_c.load(Ordering::SeqCst) {
+                            break;
+                        }
 
-                let channel = {
-                    let mut lock = q.lock().unwrap();
-                    match lock.pop() {
-                        Some(c) => c,
-                        None => break,
-                    }
-                };
+                        let channel = {
+                            let mut lock = q.lock().unwrap();
+                            match lock.pop() {
+                                Some(c) => c,
+                                None => break,
+                            }
+                        };
 
-                let clean_channel_name = channel.trim_start_matches('@').to_lowercase();
-                let stored_max_id = memory_c
-                    .lock()
-                    .unwrap()
-                    .last_seen_ids
-                    .get(&clean_channel_name)
-                    .copied();
-                let mut highest_id_seen_now = 0;
+                        let clean_channel_name = channel.trim_start_matches('@').to_lowercase();
+                        let stored_max_id = memory_c
+                            .lock()
+                            .unwrap()
+                            .last_seen_ids
+                            .get(&clean_channel_name)
+                            .copied();
+                        let mut highest_id_seen_now = 0;
 
-                let mut before: Option<String> = None;
-                let mut channel_configs = 0;
-                let mut local_gathered: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-                let mut hit_known_post = false;
+                        let mut before: Option<String> = None;
+                        let mut channel_configs = 0;
+                        let mut local_gathered: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+                        let mut hit_known_post = false;
 
-                for page in 1..=config_c.max_pages_per_channel {
-                    if stop_c.load(Ordering::SeqCst) || hit_known_post {
-                        break;
-                    }
+                        for page in 1..=config_c.max_pages_per_channel {
+                            if stop_c.load(Ordering::SeqCst) || hit_known_post {
+                                break;
+                            }
 
-                    let mut url = format!("https://t.me/s/{}", channel);
-                    if let Some(ref id) = before {
-                        url.push_str(&format!("?before={}", id));
-                    }
+                            let mut url = format!("https://t.me/s/{}", channel);
+                            if let Some(ref id) = before {
+                                url.push_str(&format!("?before={}", id));
+                            }
 
-                    match client_c.get(&url).send() {
-                        Ok(resp) if resp.status().is_success() => {
-                            if let Ok(raw_html) = resp.text() {
-                                let mut found_in_page = 0;
-                                let mut next_before = None;
+                            match client_c.get(&url).send() {
+                                Ok(resp) if resp.status().is_success() => {
+                                    if let Ok(raw_html) = resp.text() {
+                                        let mut found_in_page = 0;
+                                        let mut next_before = None;
 
-                                let decoded_html = raw_html
-                                    .replace("&amp;", "&")
-                                    .replace("&lt;", "<")
-                                    .replace("&gt;", ">")
-                                    .replace("&quot;", "\"");
+                                        let decoded_html = raw_html
+                                            .replace("&amp;", "&")
+                                            .replace("&lt;", "<")
+                                            .replace("&gt;", ">")
+                                            .replace("&quot;", "\"");
 
-                                let next_regex = Regex::new(r#"data-post="[^/]+/(\d+)""#).unwrap();
-                                for cap in next_regex.captures_iter(&decoded_html) {
-                                    next_before = Some(cap[1].to_string());
+                                        let next_regex = Regex::new(r#"data-post="[^/]+/(\d+)""#).unwrap();
+                                        for cap in next_regex.captures_iter(&decoded_html) {
+                                            next_before = Some(cap[1].to_string());
+                                        }
+
+                                        let blocks: Vec<&str> =
+                                            decoded_html.split("tgme_widget_message ").collect();
+                                        for block in blocks {
+                                            let mut block_id = 0;
+                                            if let Some(caps) = post_id_reg_c.captures(block) {
+                                                if let Ok(id) = caps[1].parse::<u64>() {
+                                                    block_id = id;
+                                                    if id > highest_id_seen_now {
+                                                        highest_id_seen_now = id;
+                                                    }
+                                                }
+                                            }
+
+                                            if let Some(known_id) = stored_max_id {
+                                                if block_id > 0 && block_id <= known_id {
+                                                    hit_known_post = true;
+                                                    continue;
+                                                }
+                                            }
+
+                                            let mut is_valid_date = true;
+                                            if let Some(caps) = date_reg_c.captures(block) {
+                                                if let Ok(parsed_date) =
+                                                    DateTime::parse_from_rfc3339(&caps[1])
+                                                {
+                                                    if parsed_date.with_timezone(&Utc) < threshold_date {
+                                                        is_valid_date = false;
+                                                    }
+                                                }
+                                            }
+
+                                            if is_valid_date {
+                                                for m in reg_c.find_iter(block) {
+                                                    let clean_link = m
+                                                        .as_str()
+                                                        .trim_end_matches(
+                                                            &[
+                                                                '(', ')', '[', ']', ' ', '!', '.', ',',
+                                                                ';', '\'', '"', '<', '>',
+                                                            ][..],
+                                                        )
+                                                        .to_string();
+                                                    if let Some(proto) = clean_link.split("://").next() {
+                                                        found_in_page += 1;
+                                                        local_gathered
+                                                            .entry(proto.to_lowercase())
+                                                            .or_default()
+                                                            .insert(clean_link);
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        channel_configs += found_in_page;
+                                        let has_next = next_before.is_some();
+                                        before = next_before;
+
+                                        if hit_known_post {
+                                            log_worker(
+                                                &tx_c,
+                                                LogLevel::Debug,
+                                                format!(
+                                                    "⏭️ @{} -> Reached previously scanned posts.",
+                                                    channel
+                                                ),
+                                            );
+                                            break;
+                                        }
+
+                                        if !has_next || found_in_page == 0 {
+                                            break;
+                                        }
+                                    }
                                 }
-
-                                let blocks: Vec<&str> =
-                                    decoded_html.split("tgme_widget_message ").collect();
-                                for block in blocks {
-                                    let mut block_id = 0;
-                                    if let Some(caps) = post_id_reg_c.captures(block) {
-                                        if let Ok(id) = caps[1].parse::<u64>() {
-                                            block_id = id;
-                                            if id > highest_id_seen_now {
-                                                highest_id_seen_now = id;
-                                            }
-                                        }
-                                    }
-
-                                    if let Some(known_id) = stored_max_id {
-                                        if block_id > 0 && block_id <= known_id {
-                                            hit_known_post = true;
-                                            continue;
-                                        }
-                                    }
-
-                                    let mut is_valid_date = true;
-                                    if let Some(caps) = date_reg_c.captures(block) {
-                                        if let Ok(parsed_date) =
-                                            DateTime::parse_from_rfc3339(&caps[1])
-                                        {
-                                            if parsed_date.with_timezone(&Utc) < threshold_date {
-                                                is_valid_date = false;
-                                            }
-                                        }
-                                    }
-
-                                    if is_valid_date {
-                                        for m in reg_c.find_iter(block) {
-                                            let clean_link = m
-                                                .as_str()
-                                                .trim_end_matches(
-                                                    &[
-                                                        '(', ')', '[', ']', ' ', '!', '.', ',',
-                                                        ';', '\'', '"', '<', '>',
-                                                    ][..],
-                                                )
-                                                .to_string();
-                                            if let Some(proto) = clean_link.split("://").next() {
-                                                found_in_page += 1;
-                                                local_gathered
-                                                    .entry(proto.to_lowercase())
-                                                    .or_default()
-                                                    .insert(clean_link);
-                                            }
-                                        }
-                                    }
-                                }
-
-                                channel_configs += found_in_page;
-                                let has_next = next_before.is_some();
-                                before = next_before;
-
-                                if hit_known_post {
+                                Err(_) => {
                                     log_worker(
                                         &tx_c,
-                                        LogLevel::Debug,
-                                        format!(
-                                            "⏭️ @{} -> Reached previously scanned posts.",
-                                            channel
-                                        ),
+                                        LogLevel::Warning,
+                                        format!("⚠️ Failed page {} of @{}", page, channel),
                                     );
                                     break;
                                 }
-
-                                if !has_next || found_in_page == 0 {
-                                    break;
-                                }
+                                _ => break,
                             }
+                            thread::sleep(Duration::from_millis(config_c.delay_ms));
                         }
-                        Err(_) => {
-                            log_worker(
-                                &tx_c,
-                                LogLevel::Warning,
-                                format!("⚠️ Failed page {} of @{}", page, channel),
-                            );
-                            break;
+
+                        if highest_id_seen_now > 0 {
+                            memory_c
+                                .lock()
+                                .unwrap()
+                                .last_seen_ids
+                                .insert(clean_channel_name, highest_id_seen_now);
                         }
-                        _ => break,
-                    }
-                    thread::sleep(Duration::from_millis(config_c.delay_ms));
-                }
 
-                if highest_id_seen_now > 0 {
-                    memory_c
-                        .lock()
-                        .unwrap()
-                        .last_seen_ids
-                        .insert(clean_channel_name, highest_id_seen_now);
-                }
+                        let mut breakdown = Vec::new();
+                        let mut g = gathered_c.lock().unwrap();
+                        for (k, v) in local_gathered {
+                            breakdown.push(format!("{}: {}", k, v.len()));
+                            g.entry(k).or_default().extend(v);
+                        }
+                        *total_c.lock().unwrap() += channel_configs;
 
-                let mut breakdown = Vec::new();
-                let mut g = gathered_c.lock().unwrap();
-                for (k, v) in local_gathered {
-                    breakdown.push(format!("{}: {}", k, v.len()));
-                    g.entry(k).or_default().extend(v);
-                }
-                *total_c.lock().unwrap() += channel_configs;
-
-                let current_done = comp_count_c.fetch_add(1, Ordering::SeqCst) + 1;
-                let breakdown_str = if breakdown.is_empty() {
-                    "None".to_string()
-                } else {
-                    breakdown.join(", ")
-                };
-                log_worker(
-                    &tx_c,
-                    LogLevel::Success,
-                    format!(
-                        "[{}/{}] ✔️ @{} -> Extracted: {} ({})",
-                        current_done, total_channels_count, channel, channel_configs, breakdown_str
-                    ),
-                );
+                        let current_done = comp_count_c.fetch_add(1, Ordering::SeqCst) + 1;
+                        let breakdown_str = if breakdown.is_empty() {
+                            "None".to_string()
+                        } else {
+                            breakdown.join(", ")
+                        };
+                        log_worker(
+                            &tx_c,
+                            LogLevel::Success,
+                            format!(
+                                "[{}/{}] ✔️ @{} -> Extracted: {} ({})",
+                                current_done, total_channels_count, channel, channel_configs, breakdown_str
+                            ),
+                        );
                     }));
                 }
 
@@ -400,7 +438,10 @@ pub fn run_worker(
                     match client.get(&link).send() {
                         Ok(resp) if resp.status().is_success() => {
                             if let Ok(raw) = resp.text() {
-                                for m in regex.find_iter(&raw) {
+                                // رمزگشایی هوشمند و خودکار بیس۶۴ در صورت لزوم
+                                let decoded_content = decode_subscription_content(&raw);
+                                
+                                for m in regex.find_iter(&decoded_content) {
                                     let clean_link = m.as_str().trim().to_string();
                                     if let Some(proto) = clean_link.split("://").next() {
                                         final_gathered
@@ -488,10 +529,8 @@ pub fn run_worker(
                 .extend(hy2_links);
         }
 
-        // --- مرحله اول: اعمال محدودیت تعداد (فاز ۱) ---
         apply_protocol_limits(&mut final_gathered, &config.protocol_rules);
 
-        // --- ذخبره سازی فاز اول (تمامی کانفیگ‌های تست نشده) ---
         let base_untested = Path::new(&config.output_directory).join("untested");
         let mut new_untested: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         for (proto, links) in &final_gathered {
@@ -513,7 +552,6 @@ pub fn run_worker(
                 write_files_standard_append(&base_untested.join("append_unique"), &final_gathered);
         }
 
-        // --- مرحله دوم: تست (فاز ۲) ---
         if config.tester.enabled {
             log_worker(
                 &tx,
@@ -527,7 +565,6 @@ pub fn run_worker(
                 tx.clone(),
             );
 
-            // --- ذخیره سازی فاز دوم: فقط mixed (منبع حقیقت = خروجی نهایی مرحله تست) ---
             let base_tested = Path::new(&config.output_directory).join("tested");
             let mut tested_mixed = BTreeSet::new();
             if config.tester.speed_test_enabled {
@@ -571,7 +608,6 @@ pub fn run_worker(
                 ),
             );
 
-            // --- فاز ۳: تبدیل به کلش ---
             convert_tested_to_clash(
                 &tested_mixed,
                 &phase2.ping_passed_mixed,
@@ -581,7 +617,6 @@ pub fn run_worker(
                 &tx,
             );
 
-            // --- فاز ۵: ارسال امن به تلگرام ---
             if config.phase5_telegram.enabled {
                 if let Err(err) = send_tested_new_only_to_telegram(
                     &config.output_directory,
@@ -594,7 +629,6 @@ pub fn run_worker(
             }
         }
 
-        // ثبت در تاریخچه نهایی و بروزرسانی آمار GUI
         let mut total_new = 0;
         let mut by_protocol = BTreeMap::new();
         for (proto, links) in &final_gathered {
