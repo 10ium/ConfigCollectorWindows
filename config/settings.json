@@ -1,6 +1,7 @@
 {
   "version": 2,
   "sources": {
+    "active_mode": "all",
     "telegram": {
       "enabled": true,
       "channels": [
@@ -97,109 +98,117 @@
         "@vmessorg",
         "@wiki_tajrobe",
         "@xsfilternet",
-        "@yebekhe",
-        "@zede_filteri"
+        "@yebekhe"
       ],
-      "max_pages": 3,
-      "lookback_days": 7,
-      "delay_ms": 350,
-      "timeout_sec": 10
+      "max_messages_per_channel": 15,
+      "delay_ms": 300
     },
     "subscriptions": {
       "enabled": true,
-      "links": [
-        "https://raw.githubusercontent.com/10Dream/VpnClashFaCollector/refs/heads/main/sub/all/mixed.txt",
-        "https://raw.githubusercontent.com/mahsanet/MahsaFreeConfig/refs/heads/main/mci/sub_1.txt",
-        "https://raw.githubusercontent.com/mahsanet/MahsaFreeConfig/refs/heads/main/mci/sub_2.txt",
-        "https://raw.githubusercontent.com/mahsanet/MahsaFreeConfig/refs/heads/main/mci/sub_3.txt",
-        "https://raw.githubusercontent.com/mahsanet/MahsaFreeConfig/refs/heads/main/mci/sub_4.txt",
-        "https://raw.githubusercontent.com/mahsanet/MahsaFreeConfig/refs/heads/main/mtn/sub_1.txt",
-        "https://raw.githubusercontent.com/mahsanet/MahsaFreeConfig/refs/heads/main/mtn/sub_2.txt",
-        "https://raw.githubusercontent.com/mahsanet/MahsaFreeConfig/refs/heads/main/mtn/sub_3.txt",
-        "https://raw.githubusercontent.com/mahsanet/MahsaFreeConfig/refs/heads/main/mtn/sub_4.txt",
+      "urls": [
+        "https://raw.githubusercontent.com/10ium/free-config/refs/heads/main/free-mihomo-sub/test.yaml",
+        "https://raw.githubusercontent.com/10ium/free-config/refs/heads/main/free-mihomo-sub/Multi__Country__RulePlus.yaml",
+        "https://raw.githubusercontent.com/barry-far/V2ray-Configs/main/Sub1.txt",
+        "https://raw.githubusercontent.com/yebekhe/TVC/main/subscriptions/xray/normal/mix",
         "https://raw.githubusercontent.com/MahsaNetConfigTopic/config/refs/heads/main/xray_final.txt",
         "https://raw.githubusercontent.com/roosterkid/openproxylist/refs/heads/main/V2RAY_RAW.txt",
         "https://raw.githubusercontent.com/10ium/HiN-VPN/main/subscription/normal/mix",
         "https://raw.githubusercontent.com/10ium/multi-proxy-config-fetcher/refs/heads/main/configs/proxy_configs.txt",
         "https://raw.githubusercontent.com/10ium/V2RayAggregator/refs/heads/master/Eternity.txt"
       ],
-      "timeout_sec": 12,
-      "ignore_ssl_errors": true
+      "timeout_sec": 12
     },
     "local_folder": {
-      "enabled": false,
-      "path": "",
-      "recursive": true,
-      "max_file_size_mb": 5
+      "enabled": true,
+      "path": "G:\\Ai project\\10Dream\\decryptor\\file for test",
+      "allowed_extensions": [
+        ".ovpn",
+        ".ehi",
+        ".npvt",
+        ".npvs",
+        ".inpv",
+        ".hat",
+        ".nm",
+        ".dark",
+        ".darktunnel",
+        ".ssc",
+        ".hc",
+        ".slip",
+        ".yaml",
+        ".txt",
+        ".conf"
+      ]
     }
   },
   "network": {
-    "mode": "direct",
+    "mode": "proxy",
     "proxy_host": "127.0.0.1",
     "proxy_port": 7890,
-    "proxy_type": "http",
-    "auto_proxy_with_best_survivor": false
+    "proxy_type": "http"
   },
   "tests": {
-    "test_1_ping": {
+    "ping": {
       "enabled": true,
-      "url": "http://cp.cloudflare.com/generate_204",
-      "timeout_sec": 5,
-      "max_latency_ms": 1200,
-      "retries": 1
+      "name_fa": "سنجش پینگ و زمان پاسخ (Ping Test)",
+      "description_fa": "ارسال درخواست بررسی اتصال و سنجش زمان تاخیر اتصال به سرور (میلی‌ثانیه)",
+      "timeout_sec": 3,
+      "max_latency_ms": 1500
     },
-    "test_2_geo_flag": {
+    "geo_flag": {
       "enabled": true,
-      "trace_url": "https://cloudflare.com/cdn-cgi/trace",
-      "attach_flag_to_name": true,
+      "name_fa": "تشخیص کشور و پرچم (Geo & Flag Emoji)",
+      "description_fa": "تشخیص موقعیت جغرافیایی و افزودن پرچم اموجی کشور به ابتدای نام کانفیگ",
       "naming_format": "{flag} {country} | {proto} | {score}★"
     },
-    "test_3_gemini": {
+    "gemini": {
       "enabled": false,
-      "level": 1,
-      "api_key": "",
+      "name_fa": "تست هوش مصنوعی جمنای گوگل (Google Gemini)",
+      "description_fa": "بررسی باز شدن بدون فیلتر و عملکرد هوش مصنوعی جمنای گوگل از طریق کانفیگ",
       "timeout_sec": 8
     },
-    "test_4_youtube": {
+    "website_accessibility": {
       "enabled": false,
-      "url": "https://www.youtube.com/generate_204",
-      "timeout_sec": 6
+      "name_fa": "تست دسترسی به وب‌سایت‌های دلخواه (Website Accessibility)",
+      "description_fa": "سنجش باز شدن و فیلتر نبودن مجموعه‌ای از سایت‌های منتخب و مهم کاربر",
+      "timeout_sec": 6,
+      "sites": [
+        "https://www.youtube.com/generate_204",
+        "https://telegram.org",
+        "https://gemini.google.com",
+        "https://x.com"
+      ]
     },
-    "test_5_telegram": {
+    "download_speed": {
       "enabled": false,
-      "url": "https://api.telegram.org",
-      "timeout_sec": 6
-    },
-    "test_6_custom_sites": {
-      "enabled": false,
-      "sites": []
-    },
-    "test_7_download_speed": {
-      "enabled": false,
+      "name_fa": "سنجش سرعت دانلود (Download Speed)",
+      "description_fa": "تست دریافت ترافیک واقعی از CDN کلودفلر و محاسبه پهنای باند دانلود",
       "test_url": "https://speed.cloudflare.com/__down?bytes=5000000",
-      "duration_sec": 5,
-      "min_acceptable_kbps": 500
+      "duration_sec": 5
     },
-    "test_8_upload_speed": {
+    "upload_speed": {
       "enabled": false,
+      "name_fa": "سنجش سرعت آپلود (Upload Speed)",
+      "description_fa": "ارسال بسته آزمایشی و محاسبه سرعت بارگذاری داده‌ها",
       "payload_bytes": 1048576,
       "timeout_sec": 8
     },
-    "test_9_udp": {
+    "udp": {
       "enabled": true,
-      "target_server": "1.1.1.1:53",
-      "timeout_sec": 4
+      "name_fa": "بررسی پروتکل UDP (گیمینگ و تماس صوتی)",
+      "description_fa": "بررسی انتقال بسته‌های UDP مناسب برای بازی‌های آنلاین، دیسکورد و تماس‌های صوتی/تصویری",
+      "timeout_sec": 3
     },
-    "test_10_stability": {
+    "stability": {
       "enabled": true,
-      "probe_count": 4,
-      "probe_interval_ms": 300,
-      "max_packet_loss_percent": 30.0,
+      "name_fa": "سنجش پایداری و نوسان پینگ (Stability & Jitter)",
+      "description_fa": "چندین بار آزمایش پشت سر هم برای اطمینان از عدم قطعی لحظه‌ای و نوسان کم",
+      "probe_count": 3,
       "max_jitter_ms": 120.0
     },
-    "test_11_fraud_score": {
+    "fraud_score": {
       "enabled": true,
-      "api_endpoint": "https://ipapi.is/json/",
+      "name_fa": "نمره تمیزی آی‌پی (Fraud Score & Clean IP)",
+      "description_fa": "بررسی اعتبار آی‌پی کانفیگ و عدم حضور در بلک‌لیست‌ها جهت جلوگیری از کپچا",
       "max_fraud_score": 75
     }
   },
@@ -210,41 +219,17 @@
     "cleanliness_weight": 0.20,
     "tie_breaker_enabled": true
   },
-  "profile": {
-    "name": "medium",
-    "concurrency_telegram": 4,
-    "concurrency_ping": 30,
-    "concurrency_speed": 2,
-    "memory_limit_mb": 250
-  },
-  "scheduler": {
-    "loop_enabled": false,
-    "interval_minutes": 60,
-    "quiet_hours_enabled": false,
-    "quiet_start_hour": 1,
-    "quiet_end_hour": 6,
-    "start_at_boot": false
-  },
   "filters": {
     "filter_duplicates": true,
     "filter_broken": true,
     "filter_expired": true,
     "limit_max_configs": false,
-    "max_configs_count": 500,
-    "allowed_protocols": []
+    "max_configs_count": 500
   },
   "exporter": {
     "output_dir": "output",
     "export_clash_provider": true,
     "export_clash_full": true,
-    "export_raw_links": true,
-    "export_base64_sub": true,
-    "max_export_count": 500,
-    "save_new_only": false
-  },
-  "ui": {
-    "language": "fa",
-    "theme_mode": "system",
-    "font_size_scale": 1.0
+    "export_raw_links": true
   }
 }

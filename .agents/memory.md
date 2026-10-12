@@ -65,12 +65,17 @@
 
 ## Real Benchmark Results on User Test Suite
 - Tested against 838 local files in `G:\Ai project\10Dream\decryptor\file for test` + remote subscriptions:
-  - **Total Discovered**: 63,746 proxy configurations.
-  - **Dropped**: 49,590 duplicates, 19 broken/invalid, 0 expired.
-  - **Surviving Unique Configs**: 14,137 configs.
+  - **Total Discovered**: 65,995 proxy configurations.
+  - **Dropped**: 50,410 duplicates, 33 broken/invalid, **59 expired configs dropped**.
+  - **Surviving Unique Configs**: 15,493 configs.
   - **OpenVPN Extracted**: 114 configs.
   - **Mihomo Compatibility**: 100.0%.
-  - **Protocol Distribution**: VLESS (73.2%), SS (13.4%), VMess (6.1%), Trojan (4.7%), Hysteria 2 (1.1%), OpenVPN (0.8%), WireGuard (0.4%), AnyTLS (0.2%), Masque, TUIC, Hysteria 1, Socks5.
-  - **Features**: 3,786 Reality, 5,578 WebSocket, 344 gRPC, 4,591 TLS, 517 UDP.
-- **Windows Runner**: Provided double-click launcher `FreedomConfigCollector.cmd` and `tools/comprehensive_test_runner.py` for direct execution on Windows.
+
+## Standalone Desktop Window & Silent Launcher (Zero CMD)
+- **Microsoft Edge App Mode**: Uses `msedge.exe --app="http://127.0.0.1:12059" --window-size=1250,850` to open an isolated desktop window with zero browser tabs, zero URL bar, and custom native window controls.
+- **Silent Launching**: Created `FreedomConfigCollector.vbs` utilizing `pythonw.exe` and `WScript.Shell` window style `0` (hidden), completely eliminating the black terminal window and preventing Persian console encoding corruption (`cp1256`).
+- **Unified Site Test**: Merged individual website probes into a single «تست دسترسی به وب‌سایت‌های دلخواه» with user-customizable target URLs list.
+- **Source Management**: Added full interactive source mode switcher (`all`, `folder`, `subscriptions`, `telegram`), Telegram channel list editor, and subscription URL editor.
+- **Expiry Detection Fix**: Integrated `checkExpiration(decResult)` from `cf_decryptor_bot` directly into `tools/decryptor_bridge.mjs`, correctly identifying and filtering the 55 expired container files.
+
 

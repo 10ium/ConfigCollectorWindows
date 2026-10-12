@@ -16,11 +16,18 @@ import urllib.request
 import urllib.parse
 import base64
 import hashlib
+import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import yaml
 
-sys.stdout.reconfigure(encoding='utf-8')
+if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+if sys.stderr and hasattr(sys.stderr, 'reconfigure'):
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SETTINGS_PATH = os.path.join(BASE_DIR, "config", "settings.json")
+OUTPUT_DIR = os.path.join(BASE_DIR, "output")
 PROXY_HOST = "127.0.0.1"
 PROXY_PORT = 7890
 TEST_FILES_DIR = r"G:\Ai project\10Dream\decryptor\file for test"
@@ -28,8 +35,6 @@ SUBSCRIPTION_URLS = [
     "https://raw.githubusercontent.com/10ium/free-config/refs/heads/main/free-mihomo-sub/test.yaml",
     "https://raw.githubusercontent.com/10ium/free-config/refs/heads/main/free-mihomo-sub/Multi__Country__RulePlus.yaml"
 ]
-OUTPUT_DIR = r"G:\Ai project\10ium\Freedom Config Collector\output"
-SETTINGS_PATH = r"G:\Ai project\10ium\Freedom Config Collector\config\settings.json"
 
 COUNTRY_FLAGS = {
     "US": "🇺🇸", "DE": "🇩🇪", "GB": "🇬🇧", "FR": "🇫🇷", "NL": "🇳🇱",
@@ -39,6 +44,22 @@ COUNTRY_FLAGS = {
     "UA": "🇺🇦", "RO": "🇷🇴", "HK": "🇭🇰", "TW": "🇹🇼", "AU": "🇦🇺",
     "UN": "🌐"
 }
+
+def run_decryptor_bridge(dir_path):
+    bridge_script = os.path.join(BASE_DIR, "tools", "decryptor_bridge.mjs")
+    if not os.path.exists(bridge_script):
+        return {"ok": False, "stats": {}, "results": []}
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    temp_out = os.path.join(OUTPUT_DIR, "decrypted_containers.json")
+    cmd = ["node", bridge_script, dir_path, temp_out]
+    try:
+        proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="ignore", timeout=150)
+        if os.path.exists(temp_out):
+            with open(temp_out, "r", encoding="utf-8", errors="ignore") as f:
+                return json.load(f)
+    except Exception as e:
+        print(f"   ⚠️ Decryptor bridge error: {e}")
+    return {"ok": False, "stats": {}, "results": []}
 
 def load_settings():
     if os.path.exists(SETTINGS_PATH):
@@ -495,65 +516,124 @@ def main():
     print(f"   • Expired Configs Filter: {'Enabled' if filter_expired else 'Disabled'}")
     print(f"   • Output Limit: {max_count if limit_max else 'Unlimited'}")
 
+    sources_cfg = settings.get("sources", {})
+    active_mode = sources_cfg.get("active_mode", "all")
+    local_cfg = sources_cfg.get("local_folder", {})
+    subs_cfg = sources_cfg.get("subscriptions", {})
+    tests_cfg = settings.get("tests", {})
+
+    test_files_dir = local_cfg.get("path") or TEST_FILES_DIR
+    sub_urls = subs_cfg.get("urls") or SUBSCRIPTION_URLS
+
     all_nodes = []
     source_stats = {}
 
-    # 1. Process Local Files
-    print(f"\n📂 Scanning local test files in: {TEST_FILES_DIR}")
-    if os.path.exists(TEST_FILES_DIR):
-        file_list = [f for f in os.listdir(TEST_FILES_DIR) if os.path.isfile(os.path.join(TEST_FILES_DIR, f))]
-        print(f"   Found {len(file_list)} files. Processing...")
-        
-        for idx, filename in enumerate(file_list):
-            filepath = os.path.join(TEST_FILES_DIR, filename)
+    # 1. Process Local Files & Containers
+    if active_mode in ["all", "folder"] and local_cfg.get("enabled", True):
+        print(f"\n📂 Scanning local test files in: {test_files_dir}")
+        if os.path.exists(test_files_dir):
+            file_list = [f for f in os.listdir(test_files_dir) if os.path.isfile(os.path.join(test_files_dir, f))]
+            print(f"   Found {len(file_list)} files. Decrypting container files via cf_decryptor_bot...")
+
+            # Run decryptor bridge for encrypted containers (.ehi, .npvt, .hat, etc.)
+            bridge_data = run_decryptor_bridge(test_files_dir)
+            processed_container_files = set()
+            if bridge_data.get("ok"):
+                c_stats = bridge_data.get("stats", {})
+                print(f"   🔓 Container Decryption Stats: Total {c_stats.get('totalContainers',0)} containers, {c_stats.get('successDecrypted',0)} decrypted, {c_stats.get('expiredCount',0)} expired.")
+                for r in bridge_data.get("results", []):
+                    fname = r.get("file", "")
+                    processed_container_files.add(fname)
+                    is_exp = r.get("isExpired", False)
+                    exp_ts = r.get("expiryTimestamp", 0)
+                    file_nodes = []
+
+                    # 1. From links
+                    for l in r.get("links", []):
+                        uri = l.get("link", "")
+                        if uri:
+                            n = parse_uri(uri, fname)
+                            if n:
+                                n.is_expired = is_exp
+                                n.expiry_timestamp = exp_ts
+                                file_nodes.append(n)
+
+                    # 2. From raw profiles if no links were parsed
+                    if not file_nodes and r.get("profiles"):
+                        for p in r.get("profiles", []):
+                            ptype = p.get("type", "unknown")
+                            pserver = p.get("server", "")
+                            pport = int(p.get("port", 0) or p.get("serverPort", 0) or 0)
+                            pname = p.get("name", fname)
+                            if pserver and pport > 0:
+                                n = ConfigNode(ptype, pserver, pport, pname)
+                                n.params = p
+                                n.is_expired = is_exp
+                                n.expiry_timestamp = exp_ts
+                                file_nodes.append(n)
+
+                    all_nodes.extend(file_nodes)
+                    source_stats[fname] = {
+                        "source_name": fname,
+                        "source_type": "container",
+                        "discovered": len(file_nodes),
+                        "is_expired": is_exp,
+                        "nodes": file_nodes
+                    }
+
+            # Process remaining non-container files (.txt, .yaml, .conf, .ovpn)
+            allowed_exts = local_cfg.get("allowed_extensions", [".ovpn", ".yaml", ".txt", ".conf"])
+            text_files = [f for f in file_list if f not in processed_container_files and any(f.lower().endswith(ext) for ext in allowed_exts)]
+            print(f"   📄 Parsing {len(text_files)} standard text/ovpn files...")
+
+            for idx, filename in enumerate(text_files):
+                filepath = os.path.join(test_files_dir, filename)
+                try:
+                    with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+                        content = f.read()
+                    nodes = extract_nodes_from_content(content, filename, source_type="file")
+                    all_nodes.extend(nodes)
+                    source_stats[filename] = {
+                        "source_name": filename,
+                        "source_type": "file",
+                        "discovered": len(nodes),
+                        "nodes": nodes
+                    }
+                except Exception:
+                    pass
+        else:
+            print(f"   ⚠️ Directory not found: {test_files_dir}")
+
+    # 2. Process Remote Subscriptions
+    if active_mode in ["all", "subscriptions"] and subs_cfg.get("enabled", True):
+        print(f"\n🌐 Fetching Subscription URLs (via proxy 127.0.0.1:7890)...")
+        proxy_handler = urllib.request.ProxyHandler({'http': f'http://{PROXY_HOST}:{PROXY_PORT}', 'https': f'http://{PROXY_HOST}:{PROXY_PORT}'})
+        opener = urllib.request.build_opener(proxy_handler)
+
+        for sub_url in sub_urls:
+            sub_name = sub_url.split("/")[-1]
+            print(f"   Fetching: {sub_name}...")
             try:
-                with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
-                    content = f.read()
-                nodes = extract_nodes_from_content(content, filename, source_type="file")
+                req = urllib.request.Request(sub_url, headers={'User-Agent': 'FreedomCollector/2.0'})
+                with opener.open(req, timeout=12) as resp:
+                    raw_data = resp.read().decode('utf-8', errors='ignore')
+                nodes = extract_nodes_from_content(raw_data, sub_name, source_type="subscription")
                 all_nodes.extend(nodes)
-                
-                source_stats[filename] = {
-                    "source_name": filename,
-                    "source_type": "file",
+                source_stats[sub_name] = {
+                    "source_name": sub_name,
+                    "source_type": "subscription",
                     "discovered": len(nodes),
                     "nodes": nodes
                 }
+                print(f"   ✅ {sub_name}: Discovered {len(nodes)} proxies")
             except Exception as e:
-                pass
-            if (idx + 1) % 150 == 0 or idx + 1 == len(file_list):
-                print(f"   Processed {idx + 1}/{len(file_list)} files... Total configs discovered so far: {len(all_nodes)}")
-    else:
-        print(f"   ⚠️ Directory not found: {TEST_FILES_DIR}")
-
-    # 2. Process Remote Subscriptions
-    print(f"\n🌐 Fetching Subscription URLs (via proxy 127.0.0.1:7890)...")
-    proxy_handler = urllib.request.ProxyHandler({'http': f'http://{PROXY_HOST}:{PROXY_PORT}', 'https': f'http://{PROXY_HOST}:{PROXY_PORT}'})
-    opener = urllib.request.build_opener(proxy_handler)
-
-    for sub_url in SUBSCRIPTION_URLS:
-        sub_name = sub_url.split("/")[-1]
-        print(f"   Fetching: {sub_name}...")
-        try:
-            req = urllib.request.Request(sub_url, headers={'User-Agent': 'FreedomCollector/2.0'})
-            with opener.open(req, timeout=12) as resp:
-                raw_data = resp.read().decode('utf-8', errors='ignore')
-            nodes = extract_nodes_from_content(raw_data, sub_name, source_type="subscription")
-            all_nodes.extend(nodes)
-            source_stats[sub_name] = {
-                "source_name": sub_name,
-                "source_type": "subscription",
-                "discovered": len(nodes),
-                "nodes": nodes
-            }
-            print(f"   ✅ {sub_name}: Discovered {len(nodes)} proxies")
-        except Exception as e:
-            print(f"   ❌ {sub_name} Failed: {e}")
-            source_stats[sub_name] = {
-                "source_name": sub_name,
-                "source_type": "subscription",
-                "discovered": 0,
-                "nodes": []
-            }
+                print(f"   ❌ {sub_name} Failed: {e}")
+                source_stats[sub_name] = {
+                    "source_name": sub_name,
+                    "source_type": "subscription",
+                    "discovered": 0,
+                    "nodes": []
+                }
 
     print(f"\n📊 Total Discovered Configurations: {len(all_nodes)}")
 
@@ -588,25 +668,46 @@ def main():
     print(f"   • Duplicates Dropped: {duplicate_count}")
     print(f"   • Surviving Unique Configs: {len(valid_nodes)}")
 
-    # 4. Multi-Probe Testing (Ping, Geo, UDP, Stability)
+    # 4. Multi-Probe Testing
     print(f"\n⚡ Running Multi-Probe Testing on Survivors (Concurrency: 25)...")
     survivors = []
-    
-    # We sample test up to 200 nodes for fast local verification
     test_batch = valid_nodes[:200] if len(valid_nodes) > 200 else valid_nodes
     print(f"   Testing active batch of {len(test_batch)} configs...")
 
+    ping_enabled = tests_cfg.get("ping", {}).get("enabled", True)
+    geo_enabled = tests_cfg.get("geo_flag", {}).get("enabled", True)
+    udp_enabled = tests_cfg.get("udp", {}).get("enabled", True)
+    stability_enabled = tests_cfg.get("stability", {}).get("enabled", True)
+
     def probe_node(node):
-        alive, ping = test_ping(node.server, node.port, timeout=2.0)
-        node.alive = alive
-        node.ping_ms = ping if alive else 9999.0
-        node.ping_micros = int(node.ping_ms * 1000)
-        node.country_code = resolve_country(node.server)
-        node.flag_emoji = COUNTRY_FLAGS.get(node.country_code, "🌐")
-        if alive:
-            node.udp_supported = test_udp(node.server, node.port)
-            # Simulated jitter from multiple pings
-            node.jitter_ms = round(abs(ping * 0.12), 2)
+        if ping_enabled:
+            alive, ping = test_ping(node.server, node.port, timeout=2.0)
+            node.alive = alive
+            node.ping_ms = ping if alive else 9999.0
+            node.ping_micros = int(node.ping_ms * 1000)
+        else:
+            node.alive = True
+            node.ping_ms = 100.0
+            node.ping_micros = 100000
+
+        if geo_enabled:
+            node.country_code = resolve_country(node.server)
+            node.flag_emoji = COUNTRY_FLAGS.get(node.country_code, "🌐")
+        else:
+            node.country_code = "UN"
+            node.flag_emoji = "🌐"
+
+        if node.alive:
+            if udp_enabled:
+                node.udp_supported = test_udp(node.server, node.port)
+            else:
+                node.udp_supported = False
+
+            if stability_enabled:
+                node.jitter_ms = round(abs(node.ping_ms * 0.12), 2)
+            else:
+                node.jitter_ms = 0.0
+
             node.score = calculate_score(node.ping_ms, node.jitter_ms, node.udp_supported, node.fraud_score, node.fingerprint())
         else:
             node.score = 0.0
