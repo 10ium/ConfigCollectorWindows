@@ -1,0 +1,39 @@
+# Reference repos (read-only research material)
+reference/
+local-samples/
+.backups/
+
+# Binaries and build outputs
+*.exe
+*.dll
+*.so
+*.dylib
+*.a
+*.apk
+*.aab
+build/
+bin/
+dist/
+
+# Go build artifacts
+engine/bin/
+engine/vendor/
+
+# Flutter & Dart build artifacts
+app/.dart_tool/
+app/build/
+app/.flutter-plugins
+app/.flutter-plugins-dependencies
+app/.packages
+app/.pub-cache/
+app/.pub/
+
+# IDE & OS temporary files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+Thumbs.db
+Desktop.ini
+.DS_Store
