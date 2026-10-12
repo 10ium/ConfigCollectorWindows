@@ -1,105 +1,82 @@
-# Protocol & Format Parsing Specification (from cf_decryptor_bot)
+# Protocol & Format Parsing Specification (Comprehensive cf_decryptor_bot parity)
 
 <div dir="rtl">
 
-## راهنمای جامع پارس، رمزگشایی و تبدیل پروتکل‌ها (برگرفته از cf_decryptor_bot)
+## راهنمای جامع تمام قالب‌ها، فایل‌های رمزنگاری‌شده و پروتکل‌ها
 
-این مستند تمام قوانین، پارامترهای فنی و نحوه تبدیل پروتکل‌های مختلف به فرمت استاندارد Clash/Mihomo را مشخص می‌کند.
-
----
-
-### ۱. پاکسازی متن و نویسه‌های مخفی
-پیش از هرگونه پردازش، کاراکترهای نامرئی، کنترلی و مخرب که باعث Mojibake یا خطای فرمت می‌شوند، با عبارات باقاعده زیر حذف می‌شوند:
-- Regex: `[\x00-\x1F\x7F-\x9F\u200B-\u200D\uFEFF\uFFFD]`
-- کدهای HTML با انکودینگ کاراکتر (مانند `&amp;` به `&`، `&#35;` به `#`) دیکد می‌شوند.
+این سند مشخصات فنی کامل تمام قالب‌های فایل، کانتینرهای رمزنگاری‌شده، و ۴۳ پروتکل استخراج‌شده از پروژه مرجع `cf_decryptor_bot` را توضیح می‌دهد.
 
 ---
 
-### ۲. پروتکل‌های پشتیبانی‌شده و پارامترهای هرکدام
+### ۱. کانتینرها و فایل‌های رمزنگاری‌شده (Encrypted File Formats)
 
-#### ۱. پروتکل VLESS (`vless://`)
-- **ساختار لینک**: `vless://{uuid}@{server}:{port}?{params}#{name}`
-- **پارامترهای کلیدی**:
-  - `type` یا `network`: `tcp`، `ws`، `grpc`، `xhttp`، `splithttp`، `http`
-  - `security`: `none`، `tls`، `reality`
-  - `flow`: `xtls-rprx-vision`
-  - `sni` یا `peer`: نام دامنه سرور برای TLS
-  - `fp`: فینگرپرینت uTLS (`chrome`، `firefox`، `safari`، `randomized`، `unsafe`)
-  - **پارامترهای اختصاصی Reality**:
-    - `pbk`: کلید عمومی (Public Key)
-    - `sid`: شناسه کوتاه (Short ID)
-    - `spx`: مسیر SpiderX
-  - **پارامترهای انتقال (Transport)**:
-    - WebSocket: `path`، `host`
-    - gRPC: `serviceName`
-    - xHTTP / SplitHTTP: `path`، `host`، `mode`
-    - TCP HTTP: `headerType=http`، `path`، `host`
+نرم‌افزار تمامی فایل‌های تولید شده توسط اپلیکیشن‌های معروف عبور از فیلترینگ را شناسایی و رمزگشایی می‌کند:
 
-#### ۲. پروتکل VMess (`vmess://`)
-- **ساختار لینک**: `vmess://{base64(JSON)}`
-- **فیلدهای جیسون**:
-  - `v`: نسخه پروتکل
-  - `ps`: نام کانفیگ
-  - `add`: آدرس سرور
-  - `port`: پورت اتصال
-  - `id`: شناسه کاربر (UUID)
-  - `aid`: آلتر آی‌دی (AlterID - پیش‌فرض 0)
-  - `scy`: متد رمزنگاری (`auto`، `aes-128-gcm`، `chacha20-poly1305`، `none`)
-  - `net`: نوع شبکه (`tcp`، `ws`، `grpc`، `h2`)
-  - `type`: نوع هدر (مثلاً `none` یا `http`)
-  - `host` و `path`: برای انتقال وب‌سوکت و HTTP
-  - `tls`: فعال یا غیرفعال بودن TLS
-  - `sni` و `alpn`: نام سرور و پروتکل‌های لایه کاربرد
-  - `fp`: فینگرپرینت TLS
-
-#### ۳. پروتکل Trojan (`trojan://`)
-- **ساختار لینک**: `trojan://{password}@{server}:{port}?{params}#{name}`
-- **پارامترها**:
-  - `sni` یا `peer`: دامنه SNI
-  - `type`: نوع انتقال (`tcp`، `ws`، `grpc`)
-  - `security`: `tls` یا `reality`
-  - `alpn`، `fp`، `path`، `host`، `serviceName`
-
-#### ۴. پروتکل Hysteria 2 / hy2 (`hysteria2://` یا `hy2://`)
-- **ساختار لینک**: `hysteria2://{password}@{server}:{port}?{params}#{name}`
-- **پارامترها**:
-  - `sni`: دامنه سرور
-  - `insecure`: نادیده گرفتن اعتبار گواهی (`1` یا `true`)
-  - `obfs`: نوع مبهم‌سازی (`salamander` یا `none`)
-  - `obfs-password`: رمز مبهم‌سازی
-  - `alpn`: پیش‌فرض `["h3"]`
-
-#### ۵. پروتکل TUIC (`tuic://`)
-- **ساختار لینک**: `tuic://{uuid}:{password}@{server}:{port}?{params}#{name}`
-- **پارامترها**:
-  - `congestion_control`: کنترل ازدحام (`bbr`، `cubic`، `new_reno`)
-  - `udp_relay_mode`: حالت ارسال UDP (`native` یا `quic`)
-  - `sni`، `alpn`، `disable_sni`
-
-#### ۶. پروتکل Shadowsocks (`ss://`)
-- **فرمت‌های مختلف**:
-  - استاندارد SIP002: `ss://{base64(method:password)}@{server}:{port}#{name}`
-  - فرمت قدیمی: `ss://{base64(method:password@server:port)}#{name}`
-  - پلاگین‌ها: `plugin=v2ray-plugin;mode=websocket;host=...;path=...` یا `obfs-local`
-
-#### ۷. پروتکل WireGuard / AmneziaWG (`wireguard://` یا `wg://`)
-- **پارامترها**:
-  - `privateKey`، `publicKey`، `presharedKey`
-  - `reserved`: بایت‌های رزرو شده (برای دور زدن محدودیت‌های همراه اول/ایرانسل)
-  - `mtu`، `localAddress`
-  - پارامترهای نویز آمینزیا: `jc`، `jmin`، `jmax`، `s1`، `s2`، `h1`، `h2`، `wnoise`
-
-#### ۸. پروتکل پروکسی تلگرام (`tg://proxy`، `tg://socks`، `https://t.me/proxy`)
-- استخراج مستقیم سرور، پورت، یوزرنیم و پسورد به عنوان پروکسی استاندارد SOCKS5.
+| پسوند فایل | نام نرم‌افزار | روش رمزگشایی | خروجی استخراج‌شده |
+| :--- | :--- | :--- | :--- |
+| **`.ehi`** | **HTTP Injector** | الگوریتم دولایه AES-CBC + XXTEA + XOR با کلید Salt | کانفیگ‌های VLESS، VMess، Trojan و SSH |
+| **`.npv` / `.npv4` / `.npvt`** | **NapsternetV** | رمزگشایی ChaCha20-Poly1305 / AES-GCM / WBAES | پروفایل‌های V2Ray، Xray، Trojan و پروکسی |
+| **`.dark` / `darktunnel://`** | **Dark Tunnel** | رمزگشایی AES-CFB (کلیدهای DT 192/256) + MessagePack | لینک‌های V2Ray، مشخصات سرور SSH و پروکسی |
+| **`.nm` / `nm-*://`** | **NetMod Syna** | رمزگشایی AES-128-ECB با کلیدهای سه‌گانه رسمی | کانفیگ‌های چندگانه VLESS، VMess، SSH و Proxy |
+| **`.hat`** | **HA Tunnel Plus** | رمزگشایی AES-128-ECB با کلید مشتق‌شده از SHA-1 | سرورهای HTTP Proxy، SNI و هدرهای Realm Host |
+| **`.hc`** | **HTTP Custom** | رمزگشایی ChaCha20 چندبخشی + هدرهای XOR | کانفیگ‌های متصل به سرور و Payload |
+| **`.ssc` / `ssc://`** | **SSH Custom** | رمزگشایی چندلایه ChaCha20 بر روی رشته‌های معکوس | یوزرنیم، پسورد، پورت و کلید سرور SSH |
+| **`.slip` / `slipnet://`** | **SlipNet** | رمزگشایی AES-CTR با کلیدهای اختصاصی SLIP_KEY | کانفیگ‌های تونل DNS و رمزنگاری‌شده |
+| **`.yaml` / `.yml`** | **Clash / Mihomo** | پارس مستقیم ساختار درختی `proxies` | تمام انواع پروتکل‌های کلش با تنظیمات پیشرفته |
+| **`.json`** | **Sing-box** | پارس مستقیم آرایه `outbounds` | تمام پروتکل‌های مدرن سینگ‌باکس |
+| **`.conf`** | **WireGuard** | استخراج سکشن‌های `[Interface]` و `[Peer]` | کلید خصوصی، آدرس، پورت و بایت‌های Reserved |
 
 ---
 
-### ۳. امضای فنی یکتا برای حذف تکراری‌ها (Deduplication Fingerprint)
+### ۲. فهرست کامل ۴۳ پروتکل تحت پوشش (Supported Protocols & Schemes)
 
-برای اینکه کانفیگ‌های یکسان که فقط اسمشان در کانال‌های مختلف عوض شده دوباره تست نشوند، یک شناسه یکتا ساخته می‌شود:
+#### الف) پروتکل‌های اصلی پروکسی (۲۳ پروتکل)
+1. `vless://`: پروتکل نسل جدید VLESS با جریان Vision و امنیت Reality.
+2. `vmess://`: فرمت رمزنگاری استاندارد V2Ray (Base64 JSON).
+3. `trojan://`: پروتکل تروجان شبیه‌ساز ترافیک وب TLS.
+4. `ss://`: شادوساکس استاندارد SIP002 و فرمت قدیمی با پلاگین‌های v2ray-plugin و obfs.
+5. `ssr://`: شادوساکس آر (ShadowsocksR) با پروتکل‌ها و مبهم‌سازی‌های متنوع.
+6. `hysteria2://` / `hy2://`: پروتکل نسل جدید بر بستر UDP QUIC با پورتهای منعطف و obfs سالاماندر.
+7. `hysteria://`: نسخه ۱ هیستریا با پهنای باند آپلود و دانلود اختصاصی.
+8. `wireguard://` / `wg://`: وایرگارد استاندارد به همراه پارامترهای ضد فیلتر آمینزیا (AmneziaWG).
+9. `masque://`: پروتکل مدرن ماسک بر بستر HTTP/3.
+10. `tuic://`: پروتکل تویک بر بستر QUIC با کنترل ازدحام BBR.
+11. `snell://`: پروتکل اسنل با مبهم‌سازی HTTP و نسخه‌های مختلف (v1 تا v4).
+12. `shadowtls://`: پروتکل شادوتلس با شبیه‌سازی موازات TLS.
+13. `anytls://`: پروتکل انی‌تلس.
+14. `ssh://`: اتصال امن ترمینال و تونل SSH.
+15. `socks5://`: پروکسی ساکس ۵ با یا بدون احراز هویت.
+16. `socks://`: نام مستعار ساکس.
+17. `http://` / `https://`: پروکسی وب استاندارد با پشتیبانی از احراز هویت.
+18. `vpn://`: لینک‌های اتصال عمومی VPN.
+19. `naive://`: نیو پروکسی (NaiveProxy).
+20. `tailcat://`: تونل‌های شبکه خصوصی تیل‌کت.
+21. `tg://proxy` / `tg://socks`: پروکسی‌های اختصاصی تلگرام.
+22. `ssc://`: لینک‌های اس‌اس‌اچ کاستوم.
+23. `darktunnel://`: لینک‌های اختصاصی دارک تونل.
 
-$$\text{Fingerprint} = \text{MD5}(\text{Protocol} + \text{ServerIP} + \text{Port} + \text{UUID/Password} + \text{Network} + \text{SNI} + \text{Path})$$
+#### ب) پروتکل‌های تونل DNS (۲۰ پروتکل ضد فیلترینگ)
+پروتکل‌های عبور از فیلترینگ از طریق بسته‌های DNS که در شرایط اختلال شدید اینترنت کاربرد دارند:
+`dns://`، `nm-dns://`، `nm-vless://`، `slipnet-enc://`، `slipnet://`، `slipstream://`، `dnstt://`، `dnst://`، `dnstunnel://`، `vaydns://`، `stormdns://`، `cottendns://`، `masterdns://`، `masterdnsvpn://`، `noizdns://`، `slowdns://`، `ssh-dns://`، `dns-ssh://`، `ssh-over-dns://`، `whitedns://`.
 
-اگر فینگرپرینت قبلاً در این دوره دیده شده باشد، کانفیگ فوراً بدون ارسال درخواست به شبکه نادیده گرفته می‌شود.
+---
+
+### ۳. متغیرها و پارامترهای هر پروتکل
+
+- **VLESS / Trojan:**
+  - `uuid`, `password`, `security` (none, tls, reality), `flow` (xtls-rprx-vision)
+  - `type` / `network` (tcp, ws, grpc, xhttp, splithttp, h2)
+  - `sni`, `fp` (uTLS fingerprint: chrome, firefox, safari, randomized, unsafe), `alpn`
+  - پارامترهای Reality: `pbk` (کلید عمومی), `sid` (شناسه کوتاه), `spx` (مسیر SpiderX)
+  - هدرها: `path`, `host`, `serviceName`, `headerType`, `seed`
+- **Hysteria 2:**
+  - `password`, `sni`, `insecure`, `obfs` (salamander), `obfs-password`, `alpn`, `mport`
+- **TUIC:**
+  - `uuid`, `password`, `congestion_control` (bbr, cubic), `udp_relay_mode` (native, quic), `alpn`
+- **WireGuard / AmneziaWG:**
+  - `private_key`, `public_key`, `preshared_key`, `address`, `reserved`
+  - نویز آمینزیا: `jc`, `jmin`, `jmax`, `s1`, `s2`, `h1`, `h2`, `wnoise`
+- **Snell / ShadowTLS / AnyTLS:**
+  - `psk`, `obfs`, `version`, `password`, `sni`
 
 </div>

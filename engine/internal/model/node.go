@@ -8,26 +8,26 @@ import (
 	"time"
 )
 
-// Node represents a protocol-neutral proxy node extracted from raw configurations.
+// Node represents a protocol-neutral proxy node extracted from raw configurations or decrypted files.
 type Node struct {
-	ID          string            `json:"id"`
-	Protocol    string            `json:"protocol"` // vless, vmess, trojan, ss, hysteria2, tuic, wireguard, socks5, etc.
-	Name        string            `json:"name"`
-	Server      string            `json:"server"`
-	Port        int               `json:"port"`
-	UUID        string            `json:"uuid,omitempty"`
-	Password    string            `json:"password,omitempty"`
-	Method      string            `json:"method,omitempty"` // for shadowsocks
-	Security    string            `json:"security,omitempty"` // tls, reality, none
-	Flow        string            `json:"flow,omitempty"`
-	Network     string            `json:"network,omitempty"` // tcp, ws, grpc, xhttp, etc.
-	Path        string            `json:"path,omitempty"`
-	Host        string            `json:"host,omitempty"`
-	ServiceName string            `json:"service_name,omitempty"`
-	SNI         string            `json:"sni,omitempty"`
-	Fingerprint string            `json:"fingerprint,omitempty"` // utls fingerprint
-	ALPN        []string          `json:"alpn,omitempty"`
-	Insecure    bool              `json:"insecure,omitempty"`
+	ID          string   `json:"id"`
+	Protocol    string   `json:"protocol"` // vless, vmess, trojan, ss, ssr, hysteria2, tuic, wireguard, masque, snell, shadowtls, anytls, ssh, socks5, http, dns-tunnel, etc.
+	Name        string   `json:"name"`
+	Server      string   `json:"server"`
+	Port        int      `json:"port"`
+	UUID        string   `json:"uuid,omitempty"`
+	Password    string   `json:"password,omitempty"`
+	Method      string   `json:"method,omitempty"`   // for shadowsocks/ssr
+	Security    string   `json:"security,omitempty"` // tls, reality, shadowtls, none
+	Flow        string   `json:"flow,omitempty"`
+	Network     string   `json:"network,omitempty"` // tcp, ws, grpc, xhttp, splithttp, h2, quic
+	Path        string   `json:"path,omitempty"`
+	Host        string   `json:"host,omitempty"`
+	ServiceName string   `json:"service_name,omitempty"`
+	SNI         string   `json:"sni,omitempty"`
+	Fingerprint string   `json:"fingerprint,omitempty"` // utls fingerprint: chrome, firefox, safari, randomized, etc.
+	ALPN        []string `json:"alpn,omitempty"`
+	Insecure    bool     `json:"insecure,omitempty"`
 
 	// Reality specific
 	PublicKey string `json:"public_key,omitempty"`
@@ -38,19 +38,46 @@ type Node struct {
 	AuthStr      string `json:"auth_str,omitempty"`
 	Obfs         string `json:"obfs,omitempty"`
 	ObfsPassword string `json:"obfs_password,omitempty"`
+	UpMbps       int    `json:"up_mbps,omitempty"`
+	DownMbps     int    `json:"down_mbps,omitempty"`
 
 	// TUIC specific
 	CongestionControl string `json:"congestion_control,omitempty"`
-	UDP               bool   `json:"udp,omitempty"`
+	UDPRelayMode      string `json:"udp_relay_mode,omitempty"`
+	ZeroRTTHandshake  bool   `json:"zero_rtt_handshake,omitempty"`
 
-	// WireGuard / Amnezia specific
+	// WireGuard & AmneziaWG specific
 	PrivateKey   string `json:"private_key,omitempty"`
+	PresharedKey string `json:"preshared_key,omitempty"`
+	LocalAddress string `json:"local_address,omitempty"`
 	Reserved     []int  `json:"reserved,omitempty"`
 	MTU          int    `json:"mtu,omitempty"`
-	AmneziaNoise string `json:"amnezia_noise,omitempty"`
+	JC           int    `json:"jc,omitempty"`
+	JMin         int    `json:"jmin,omitempty"`
+	JMax         int    `json:"jmax,omitempty"`
+	S1           int    `json:"s1,omitempty"`
+	S2           int    `json:"s2,omitempty"`
+	H1           string `json:"h1,omitempty"`
+	H2           string `json:"h2,omitempty"`
 
-	// Source tracking
-	SourceType string    `json:"source_type"` // telegram, subscription, local_file
+	// Snell / ShadowTLS / AnyTLS
+	PSK     string `json:"psk,omitempty"`
+	Version string `json:"version,omitempty"`
+
+	// SSH specific
+	Username     string `json:"username,omitempty"`
+	Payload      string `json:"payload,omitempty"`
+	ProxyServer  string `json:"proxy_server,omitempty"`
+	ProxyPort    int    `json:"proxy_port,omitempty"`
+
+	// DNS Tunnel specific (dnstt, slipstream, slowdns, etc.)
+	IsDNSTunnel  bool     `json:"is_dns_tunnel,omitempty"`
+	Domain       string   `json:"domain,omitempty"`
+	Resolvers    []string `json:"resolvers,omitempty"`
+	DNSTTPubKey  string   `json:"dnstt_pubkey,omitempty"`
+
+	// Metadata and Origin
+	SourceType string    `json:"source_type"` // telegram, subscription, local_file, decrypted_file
 	SourceURI  string    `json:"source_uri"`
 	Discovered time.Time `json:"discovered_at"`
 
@@ -82,10 +109,8 @@ type TestResult struct {
 }
 
 // TechnicalFingerprint generates a deterministic hash representing the technical endpoint.
-// Two configs with different names or emojis but pointing to the same server/port/credentials
-// produce the same fingerprint to eliminate duplicates.
 func (n *Node) TechnicalFingerprint() string {
-	raw := fmt.Sprintf("%s|%s|%d|%s|%s|%s|%s|%s|%s|%s",
+	raw := fmt.Sprintf("%s|%s|%d|%s|%s|%s|%s|%s|%s|%s|%s|%s",
 		strings.ToLower(n.Protocol),
 		strings.ToLower(n.Server),
 		n.Port,
@@ -96,6 +121,8 @@ func (n *Node) TechnicalFingerprint() string {
 		n.Path,
 		n.PublicKey,
 		n.ShortID,
+		n.Domain,
+		n.PrivateKey,
 	)
 	hasher := md5.New()
 	hasher.Write([]byte(raw))
