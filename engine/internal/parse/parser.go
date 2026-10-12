@@ -81,6 +81,13 @@ func ExtractNodes(rawContent, sourceType, sourceURI string) ([]*model.Node, int)
 		}
 	}
 
+	// J. OpenVPN (.ovpn, or containing <ca> and client dev tun)
+	if strings.HasSuffix(strings.ToLower(sourceURI), ".ovpn") || strings.Contains(trimmed, "<ca>") || (strings.Contains(trimmed, "client") && strings.Contains(trimmed, "dev tun")) {
+		if ovpnNodes := ParseOpenVPN(trimmed, sourceURI); len(ovpnNodes) > 0 {
+			return deduplicateNodes(ovpnNodes)
+		}
+	}
+
 	// Step 2: Clean control characters and HTML entities
 	cleaned := CleanText(rawContent)
 
@@ -124,6 +131,8 @@ func parseSingleURI(rawURI string) (*model.Node, error) {
 		return ParseShadowsocks(rawURI)
 	case strings.HasPrefix(low, "tg://"):
 		return ParseTelegramProxy(rawURI)
+	case strings.HasPrefix(low, "openvpn://"):
+		return ParseOpenVPNURI(rawURI)
 	default:
 		// Extended protocols: snell, shadowtls, anytls, ssh, masque, ssr, dnstt, slipnet, etc.
 		return ParseGenericURI(rawURI)

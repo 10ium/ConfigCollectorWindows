@@ -2,6 +2,8 @@
 reference/
 local-samples/
 .backups/
+output/
+
 
 # Binaries and build outputs
 *.exe

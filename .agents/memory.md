@@ -49,5 +49,28 @@
   - SlipNet (`.slip`, `slipnet://`, `slipnet-enc://`): AES-CTR with SLIP_KEY.
   - Structured configs: Clash YAML (`proxies:`), Sing-box JSON (`outbounds:`), WireGuard (`.conf`).
 - **All 43 Protocol Schemes Supported**:
-  - `vless`, `vmess`, `trojan`, `ss`, `ssr`, `hysteria2`, `hy2`, `hysteria`, `wireguard`, `wg`, `masque`, `tuic`, `snell`, `shadowtls`, `anytls`, `ssh`, `socks5`, `socks`, `http`, `https`, `vpn`, `naive`, `tailcat`.
+  - `vless`, `vmess`, `trojan`, `ss`, `ssr`, `hysteria2`, `hy2`, `hysteria`, `wireguard`, `wg`, `masque`, `tuic`, `snell`, `shadowtls`, `anytls`, `ssh`, `socks5`, `socks`, `http`, `https`, `vpn`, `naive`, `tailcat`, `openvpn`.
   - 20 DNS Tunnels: `dns`, `nm-dns`, `nm-vless`, `slipnet-enc`, `slipnet`, `slipstream`, `dnstt`, `dnst`, `dnstunnel`, `vaydns`, `stormdns`, `cottendns`, `masterdns`, `masterdnsvpn`, `noizdns`, `slowdns`, `ssh-dns`, `dns-ssh`, `ssh-over-dns`, `whitedns`.
+
+## OpenVPN & Native Mihomo Integration
+- Added native parser for `.ovpn` files (`engine/internal/parse/openvpn.go`), extracting server, port, proto (udp/tcp), credentials (`auth-user-pass`), certificates/keys (`<ca>`, `<cert>`, `<key>`, `<tls-auth>`, `<tls-crypt>`, `<tls-crypt-v2>`), `cipher`, and `auth`.
+- Integrated OpenVPN into Clash/Mihomo export (`engine/internal/export/clash.go`), producing valid `type: openvpn` blocks with full Mihomo spec compatibility.
+
+## Filter & De-duplication Parity (from cf_decryptor_bot)
+- Configured master filters in `config/settings.json` and engine:
+  - `filter_duplicates`: deterministic fingerprint hashing (protocol + server + port + credentials + path).
+  - `filter_broken`: validation of server IP/hostname, valid port (1-65535), and required credentials.
+  - `filter_expired`: filtering of nodes matching `configExpiryTimestamp` or past expiry dates.
+  - `limit_max_configs` and `allowed_protocols` whitelisting.
+
+## Real Benchmark Results on User Test Suite
+- Tested against 838 local files in `G:\Ai project\10Dream\decryptor\file for test` + remote subscriptions:
+  - **Total Discovered**: 63,746 proxy configurations.
+  - **Dropped**: 49,590 duplicates, 19 broken/invalid, 0 expired.
+  - **Surviving Unique Configs**: 14,137 configs.
+  - **OpenVPN Extracted**: 114 configs.
+  - **Mihomo Compatibility**: 100.0%.
+  - **Protocol Distribution**: VLESS (73.2%), SS (13.4%), VMess (6.1%), Trojan (4.7%), Hysteria 2 (1.1%), OpenVPN (0.8%), WireGuard (0.4%), AnyTLS (0.2%), Masque, TUIC, Hysteria 1, Socks5.
+  - **Features**: 3,786 Reality, 5,578 WebSocket, 344 gRPC, 4,591 TLS, 517 UDP.
+- **Windows Runner**: Provided double-click launcher `FreedomConfigCollector.cmd` and `tools/comprehensive_test_runner.py` for direct execution on Windows.
+

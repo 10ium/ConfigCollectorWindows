@@ -76,6 +76,25 @@ type Node struct {
 	Resolvers    []string `json:"resolvers,omitempty"`
 	DNSTTPubKey  string   `json:"dnstt_pubkey,omitempty"`
 
+	// OpenVPN specific
+	Proto        string `json:"proto,omitempty"` // udp or tcp
+	AuthUser     string `json:"auth_user,omitempty"`
+	AuthPass     string `json:"auth_pass,omitempty"`
+	CA           string `json:"ca,omitempty"`
+	Cert         string `json:"cert,omitempty"`
+	Key          string `json:"key,omitempty"`
+	TLSAuth      string `json:"tls_auth,omitempty"`
+	TLSCrypt     string `json:"tls_crypt,omitempty"`
+	TLSCryptV2   string `json:"tls_crypt_v2,omitempty"`
+	KeyDirection string `json:"key_direction,omitempty"`
+	Cipher       string `json:"cipher,omitempty"`
+	OpenVPNAuth  string `json:"openvpn_auth,omitempty"`
+
+	// Expiry & Validity metadata
+	ExpiryTimestamp int64 `json:"expiry_timestamp,omitempty"`
+	IsExpired       bool  `json:"is_expired,omitempty"`
+	IsBroken        bool  `json:"is_broken,omitempty"`
+
 	// Metadata and Origin
 	SourceType string    `json:"source_type"` // telegram, subscription, local_file, decrypted_file
 	SourceURI  string    `json:"source_uri"`
@@ -84,6 +103,20 @@ type Node struct {
 	// Test outcomes & scoring
 	Result TestResult `json:"result"`
 }
+
+// IsMihomoCompatible checks whether this node protocol and features are natively supported by Mihomo.
+func (n *Node) IsMihomoCompatible() bool {
+	proto := strings.ToLower(n.Protocol)
+	switch proto {
+	case "vless", "vmess", "trojan", "ss", "shadowsocks", "ssr", "hysteria", "hysteria2", "hy2",
+		"tuic", "wireguard", "snell", "shadowtls", "ssh", "socks5", "http", "openvpn",
+		"masque", "shadowquic", "trusttunnel", "mieru", "anytls", "sudoku":
+		return true
+	default:
+		return false
+	}
+}
+
 
 // TestResult encapsulates all active and historical probe measurements.
 type TestResult struct {

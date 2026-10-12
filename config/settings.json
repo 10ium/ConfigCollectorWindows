@@ -225,6 +225,14 @@
     "quiet_end_hour": 6,
     "start_at_boot": false
   },
+  "filters": {
+    "filter_duplicates": true,
+    "filter_broken": true,
+    "filter_expired": true,
+    "limit_max_configs": false,
+    "max_configs_count": 500,
+    "allowed_protocols": []
+  },
   "exporter": {
     "output_dir": "output",
     "export_clash_provider": true,

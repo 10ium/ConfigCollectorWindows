@@ -121,6 +121,48 @@ func GenerateClashProxyMap(node *model.Node, template string) map[string]interfa
 		if node.Password != "" {
 			p["password"] = node.Password
 		}
+
+	case "openvpn":
+		p["type"] = "openvpn"
+		proto := strings.ToLower(node.Proto)
+		if proto == "" {
+			proto = "udp"
+		}
+		p["proto"] = proto
+		if node.AuthUser != "" {
+			p["username"] = node.AuthUser
+		}
+		if node.AuthPass != "" {
+			p["password"] = node.AuthPass
+		}
+		if node.CA != "" {
+			p["ca"] = node.CA
+		}
+		if node.Cert != "" {
+			p["cert"] = node.Cert
+		}
+		if node.Key != "" {
+			p["key"] = node.Key
+		}
+		if node.TLSAuth != "" {
+			p["tls-auth"] = node.TLSAuth
+			if node.KeyDirection != "" {
+				p["key-direction"] = node.KeyDirection
+			}
+		}
+		if node.TLSCrypt != "" {
+			p["tls-crypt"] = node.TLSCrypt
+		}
+		if node.TLSCryptV2 != "" {
+			p["tls-crypt-v2"] = node.TLSCryptV2
+		}
+		if node.Cipher != "" {
+			p["cipher"] = node.Cipher
+		}
+		if node.OpenVPNAuth != "" {
+			p["auth"] = node.OpenVPNAuth
+		}
+		p["udp"] = (proto == "udp")
 	}
 
 	p["udp"] = true
