@@ -36,3 +36,18 @@
    - Config decoding algorithms, multi-layer base64 unwrapping, invalid unicode sanitization (`[\x00-\x1F\x7F-\x9F\u200B-\u200D\uFEFF\uFFFD]`), and Clash YAML generation with 32 groups.
 3. `reference/Gemini-Config-Checker`:
    - Chrome DevTools Protocol automation for Google AI Studio & Gemini web checks, region wall detection (`available-region`, `"currently supported in your country"`).
+
+## Comprehensive Protocol & Decryptor Parity (from cf_decryptor_bot)
+- **Supported Encrypted Containers**:
+  - HTTP Injector (`.ehi`): multi-layer AES-CBC + XXTEA + XOR salt.
+  - NapsternetV (`.npv`, `.npv4`, `.npvt`, `.npvs`): ChaCha20-Poly1305 / AES-GCM / WBAES.
+  - Dark Tunnel (`.dark`, `darktunnel://`): AES-CFB + msgpack unpacker.
+  - NetMod Syna (`.nm`, `nm-*://`): AES-128-ECB with 3 official keys.
+  - HA Tunnel Plus (`.hat`): AES-128-ECB with SHA-1 derived key.
+  - HTTP Custom (`.hc`): ChaCha20 + XOR header decryptor.
+  - SSH Custom (`.ssc`, `ssc://`): ChaCha20 on reversed hex payload.
+  - SlipNet (`.slip`, `slipnet://`, `slipnet-enc://`): AES-CTR with SLIP_KEY.
+  - Structured configs: Clash YAML (`proxies:`), Sing-box JSON (`outbounds:`), WireGuard (`.conf`).
+- **All 43 Protocol Schemes Supported**:
+  - `vless`, `vmess`, `trojan`, `ss`, `ssr`, `hysteria2`, `hy2`, `hysteria`, `wireguard`, `wg`, `masque`, `tuic`, `snell`, `shadowtls`, `anytls`, `ssh`, `socks5`, `socks`, `http`, `https`, `vpn`, `naive`, `tailcat`.
+  - 20 DNS Tunnels: `dns`, `nm-dns`, `nm-vless`, `slipnet-enc`, `slipnet`, `slipstream`, `dnstt`, `dnst`, `dnstunnel`, `vaydns`, `stormdns`, `cottendns`, `masterdns`, `masterdnsvpn`, `noizdns`, `slowdns`, `ssh-dns`, `dns-ssh`, `ssh-over-dns`, `whitedns`.
