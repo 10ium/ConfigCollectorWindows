@@ -12,28 +12,28 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   final ConfigService _config = ConfigService();
 
-  // Hardware Profile
-  String _profile = 'medium';
-
-  // System Proxy (named "سیستم پروکسی" as requested)
-  bool _systemProxyEnabled = true;
+  // Network Proxy Mode: 'system_proxy', 'socks5', 'http', 'direct'
+  String _networkMode = 'system_proxy';
   late TextEditingController _proxyHostCtrl;
   late TextEditingController _proxyPortCtrl;
 
-  // Telegram Bot Auto-Dispatcher
+  // Telegram Bot Dispatcher
   bool _telegramBotEnabled = false;
   late TextEditingController _botTokenCtrl;
   late TextEditingController _channelIdCtrl;
+  late TextEditingController _captionCtrl;
   bool _sendFiles = true;
   bool _sendSummary = true;
   String _botTestStatus = '';
 
-  // Sent History Deduplication
-  bool _dedupEnabled = true;
-
-  // Mihomo Core Manager
-  String _preferredArch = 'auto';
+  // Mihomo Core Architecture
+  String _preferredArch = 'windows-amd64';
   String _detectedArch = 'windows-amd64';
+
+  // In-App Update State
+  bool _isCheckingUpdate = false;
+  String _updateStatus = '';
+  String? _updateReleaseUrl;
 
   @override
   void initState() {
@@ -42,25 +42,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _proxyPortCtrl = TextEditingController(text: '7890');
     _botTokenCtrl = TextEditingController();
     _channelIdCtrl = TextEditingController();
+    _captionCtrl = TextEditingController(text: '⚡ کانفیگ‌های تازه استخراج‌شده توسط Freedom Config Collector v2');
     _detectSystemArchitecture();
     _loadFromConfig();
   }
 
   void _detectSystemArchitecture() {
-    // Detect Windows architecture
     if (Platform.isWindows) {
       final arch = Platform.environment['PROCESSOR_ARCHITECTURE'] ?? '';
-      if (arch.contains('64')) {
-        _detectedArch = 'windows-amd64 (پشتیبانی از AVX2)';
+      if (arch.contains('ARM') || arch.contains('64') && Platform.environment['PROCESSOR_ARCHITEW6432']?.contains('ARM') == true) {
+        _detectedArch = 'windows-arm64';
+      } else if (arch.contains('64')) {
+        _detectedArch = 'windows-amd64';
       } else {
-        _detectedArch = 'windows-amd64-compatible (بدون AVX2)';
+        _detectedArch = 'windows-386';
       }
     }
   }
 
   void _loadFromConfig() {
     final net = _config.settings['network'] ?? {};
-    _systemProxyEnabled = (net['mode'] ?? 'system_proxy') == 'system_proxy';
+    _networkMode = net['mode'] ?? 'system_proxy';
     _proxyHostCtrl.text = net['proxy_host'] ?? '127.0.0.1';
     _proxyPortCtrl.text = '${net['proxy_port'] ?? 7890}';
 
@@ -68,14 +70,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _telegramBotEnabled = tg['enabled'] ?? false;
     _botTokenCtrl.text = tg['bot_token'] ?? '';
     _channelIdCtrl.text = tg['channel_id'] ?? '';
+    _captionCtrl.text = tg['custom_caption'] ?? '⚡ کانفیگ‌های تازه استخراج‌شده توسط Freedom Config Collector v2';
     _sendFiles = tg['send_files'] ?? true;
     _sendSummary = tg['send_summary'] ?? true;
 
-    final of = _config.settings['output_filters'] ?? {};
-    _dedupEnabled = of['filter_previously_sent'] ?? true;
-
     final cm = _config.settings['core_manager'] ?? {};
-    _preferredArch = cm['preferred_arch'] ?? 'auto';
+    _preferredArch = cm['preferred_arch'] ?? _detectedArch;
   }
 
   @override
@@ -84,23 +84,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _proxyPortCtrl.dispose();
     _botTokenCtrl.dispose();
     _channelIdCtrl.dispose();
+    _captionCtrl.dispose();
     super.dispose();
   }
 
   void _saveSettings() {
     final isPersian = Localizations.localeOf(context).languageCode == 'fa';
 
-    _config.updateSetting('network', 'mode', _systemProxyEnabled ? 'system_proxy' : 'direct');
+    _config.updateSetting('network', 'mode', _networkMode);
     _config.updateSetting('network', 'proxy_host', _proxyHostCtrl.text.trim());
     _config.updateSetting('network', 'proxy_port', int.tryParse(_proxyPortCtrl.text.trim()) ?? 7890);
 
     _config.updateSetting('telegram_sender', 'enabled', _telegramBotEnabled);
     _config.updateSetting('telegram_sender', 'bot_token', _botTokenCtrl.text.trim());
     _config.updateSetting('telegram_sender', 'channel_id', _channelIdCtrl.text.trim());
+    _config.updateSetting('telegram_sender', 'custom_caption', _captionCtrl.text.trim());
     _config.updateSetting('telegram_sender', 'send_files', _sendFiles);
     _config.updateSetting('telegram_sender', 'send_summary', _sendSummary);
 
-    _config.updateSetting('output_filters', 'filter_previously_sent', _dedupEnabled);
     _config.updateSetting('core_manager', 'preferred_arch', _preferredArch);
 
     _config.saveSettings();
@@ -124,21 +125,44 @@ class _SettingsScreenState extends State<SettingsScreen> {
     setState(() => _botTestStatus = isPersian ? 'درحال اعتبارسنجی توکن...' : 'Verifying token...');
     try {
       final client = HttpClient();
-      // Use local proxy if enabled
-      if (_systemProxyEnabled) {
+      if (_networkMode == 'system_proxy' || _networkMode == 'http' || _networkMode == 'socks5') {
         final port = int.tryParse(_proxyPortCtrl.text) ?? 7890;
         client.findProxy = (uri) => 'PROXY 127.0.0.1:$port';
       }
       final req = await client.getUrl(Uri.parse('https://api.telegram.org/bot$token/getMe'));
       final resp = await req.close();
       if (resp.statusCode == 200) {
-        setState(() => _botTestStatus = isPersian ? '✅ اتصال ربات با موفقیت تایید شد!' : '✅ Telegram Bot Connected Successfully!');
+        setState(() => _botTestStatus = isPersian ? '✅ اتصال برقرار شد! ربات تلگرام تایید شد.' : '✅ Connected successfully!');
       } else {
-        setState(() => _botTestStatus = isPersian ? '❌ توکن نامعتبر است (کد خطا: ${resp.statusCode})' : '❌ Invalid Bot Token (${resp.statusCode})');
+        setState(() => _botTestStatus = isPersian ? '❌ خطا در احراز هویت توکن (${resp.statusCode}).' : '❌ Error: Status ${resp.statusCode}');
       }
     } catch (e) {
-      setState(() => _botTestStatus = isPersian ? '❌ خطا در برقراری ارتباط (پروکسی را چک کنید)' : '❌ Connection Failed ($e)');
+      setState(() => _botTestStatus = isPersian ? '⚠️ خطا در اتصال به تلگرام: $e' : '⚠️ Connection failed: $e');
     }
+  }
+
+  void _checkSoftwareUpdate() async {
+    final isPersian = Localizations.localeOf(context).languageCode == 'fa';
+    setState(() {
+      _isCheckingUpdate = true;
+      _updateStatus = isPersian ? 'درحال ارتباط با سرورهای گیت‌هاب...' : 'Checking GitHub releases...';
+      _updateReleaseUrl = null;
+    });
+
+    final res = await _config.checkUpdate();
+    setState(() {
+      _isCheckingUpdate = false;
+      if (res['hasUpdate'] == true) {
+        _updateStatus = isPersian
+            ? '🚀 نسخه جدید ${res['latestVersion']} منتشر شده است!'
+            : '🚀 New update ${res['latestVersion']} available!';
+        _updateReleaseUrl = res['releaseUrl'];
+      } else {
+        _updateStatus = isPersian
+            ? '✅ شما از آخرین نسخه (v2.0.0) استفاده می‌کنید.'
+            : '✅ You are running the latest version (v2.0.0).';
+      }
+    });
   }
 
   @override
@@ -147,7 +171,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(isPersian ? 'تنظیمات کلی، شبکه و ربات' : 'General & Network Settings'),
+        title: Text(isPersian ? 'تنظیمات عمومی، پروکسی و بروزرسانی' : 'General, Network & Update Settings'),
         actions: [
           FilledButton.icon(
             onPressed: _saveSettings,
@@ -160,45 +184,127 @@ class _SettingsScreenState extends State<SettingsScreen> {
       body: ListView(
         padding: const EdgeInsets.all(24.0),
         children: [
-          // Section 1: System Proxy ("سیستم پروکسی")
+          // Section 1: In-App Update Checker
           Card(
+            elevation: 0,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+              side: BorderSide(color: Colors.blueAccent.withOpacity(0.35)),
+            ),
+            color: Theme.of(context).cardColor,
             child: Padding(
               padding: const EdgeInsets.all(20.0),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Row(
-                        children: [
-                          const Icon(Icons.lan, color: Colors.blue, size: 28),
-                          const SizedBox(width: 12),
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                isPersian ? 'سیستم پروکسی (System Proxy)' : 'System Proxy Settings',
-                                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                              ),
-                              Text(
-                                isPersian
-                                    ? 'استفاده از فیلترشکن فعال سیستم جهت استخراج و دانلود منابع'
-                                    : 'Route extraction & updates through system proxy / VPN',
-                                style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
-                              ),
-                            ],
-                          ),
-                        ],
+                      const Icon(Icons.system_update, color: Colors.blueAccent, size: 28),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              isPersian ? 'بروزرسانی نرم‌افزار (Freedom Config Collector v2.0.0)' : 'Software Update (v2.0.0)',
+                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                            ),
+                            Text(
+                              isPersian ? 'بررسی آخرین انتشارهای رسمی مخزن گیت‌هاب' : 'Check latest official GitHub repository releases',
+                              style: TextStyle(color: Colors.grey.shade400, fontSize: 12),
+                            ),
+                          ],
+                        ),
                       ),
-                      Switch(
-                        value: _systemProxyEnabled,
-                        onChanged: (v) => setState(() => _systemProxyEnabled = v),
+                      FilledButton.tonalIcon(
+                        onPressed: _isCheckingUpdate ? null : _checkSoftwareUpdate,
+                        icon: _isCheckingUpdate
+                            ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                            : const Icon(Icons.sync),
+                        label: Text(isPersian ? 'بررسی نسخه جدید' : 'Check Now'),
                       ),
                     ],
                   ),
-                  if (_systemProxyEnabled) ...[
-                    const Divider(height: 24),
+                  if (_updateStatus.isNotEmpty) ...[
+                    const Divider(height: 20),
+                    Row(
+                      children: [
+                        Text(_updateStatus, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                        const Spacer(),
+                        if (_updateReleaseUrl != null)
+                          TextButton.icon(
+                            onPressed: () {},
+                            icon: const Icon(Icons.open_in_new, size: 16),
+                            label: Text(isPersian ? 'مشاهده در گیت‌هاب' : 'View on GitHub'),
+                          ),
+                      ],
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // Section 2: Network & Proxy Mode (System Proxy, SOCKS5, HTTP, Direct)
+          Card(
+            elevation: 0,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+              side: BorderSide(color: Colors.greenAccent.withOpacity(0.35)),
+            ),
+            color: Theme.of(context).cardColor,
+            child: Padding(
+              padding: const EdgeInsets.all(20.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.alt_route, color: Colors.greenAccent, size: 28),
+                      const SizedBox(width: 12),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            isPersian ? 'نوع پروکسی شبکه (Network Proxy Mode)' : 'Network Proxy Mode',
+                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                          ),
+                          Text(
+                            isPersian
+                                ? 'جهت دور زدن فیلترینگ هنگام دانلود سابسکریپشن‌ها و اتصال به تلگرام'
+                                : 'For bypassing blocking during source fetching and Telegram dispatch',
+                            style: TextStyle(color: Colors.grey.shade400, fontSize: 12),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                  const Divider(height: 24),
+                  SegmentedButton<String>(
+                    segments: [
+                      ButtonSegment(
+                        value: 'system_proxy',
+                        label: Text(isPersian ? 'سیستم پروکسی' : 'System Proxy'),
+                      ),
+                      ButtonSegment(
+                        value: 'socks5',
+                        label: Text('SOCKS5'),
+                      ),
+                      ButtonSegment(
+                        value: 'http',
+                        label: Text('HTTP'),
+                      ),
+                      ButtonSegment(
+                        value: 'direct',
+                        label: Text(isPersian ? 'مستقیم (Direct)' : 'Direct'),
+                      ),
+                    ],
+                    selected: {_networkMode},
+                    onSelectionChanged: (set) => setState(() => _networkMode = set.first),
+                  ),
+                  if (_networkMode != 'direct') ...[
+                    const SizedBox(height: 16),
                     Row(
                       children: [
                         Expanded(
@@ -207,7 +313,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             controller: _proxyHostCtrl,
                             decoration: InputDecoration(
                               border: const OutlineInputBorder(),
-                              labelText: isPersian ? 'آدرس IP پروکسی' : 'Proxy Host',
+                              labelText: isPersian ? 'آدرس هاست پروکسی' : 'Proxy Host',
+                              hintText: '127.0.0.1',
                             ),
                           ),
                         ),
@@ -216,9 +323,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           flex: 2,
                           child: TextField(
                             controller: _proxyPortCtrl,
+                            keyboardType: TextInputType.number,
                             decoration: InputDecoration(
                               border: const OutlineInputBorder(),
-                              labelText: isPersian ? 'پورت (پیش‌فرض: ۷۸۹۰)' : 'Port (7890)',
+                              labelText: isPersian ? 'پورت' : 'Port',
+                              hintText: '7890',
                             ),
                           ),
                         ),
@@ -231,9 +340,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           const SizedBox(height: 16),
 
-          // Section 2: Telegram Bot Auto-Dispatcher
+          // Section 3: Telegram Sender with Custom Message
           Card(
-            color: Colors.blue.shade50.withOpacity(0.4),
+            elevation: 0,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+              side: BorderSide(color: Colors.lightBlueAccent.withOpacity(0.35)),
+            ),
+            color: Theme.of(context).cardColor,
             child: Padding(
               padding: const EdgeInsets.all(20.0),
               child: Column(
@@ -244,20 +358,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     children: [
                       Row(
                         children: [
-                          const Icon(Icons.send_rounded, color: Colors.blue, size: 28),
+                          const Icon(Icons.send_rounded, color: Colors.lightBlueAccent, size: 28),
                           const SizedBox(width: 12),
                           Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                isPersian ? 'ارسال خودکار به کانال تلگرام (Telegram Auto-Send)' : 'Telegram Bot Auto-Dispatcher',
+                                isPersian ? 'ارسال خودکار به کانال تلگرام (Telegram Dispatcher)' : 'Telegram Channel Auto-Dispatcher',
                                 style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
                               ),
                               Text(
-                                isPersian
-                                    ? 'ارسال اتوماتیک فایل‌های خروجی و گزارش نتایج به کانال اختصاصی شما'
-                                    : 'Automatically post tested config files to your Telegram channel',
-                                style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
+                                isPersian ? 'انتشار خودکار فایل‌های خروجی و گزارش نتایج در کانال' : 'Automatically pushes tested configs to your channel',
+                                style: TextStyle(color: Colors.grey.shade400, fontSize: 12),
                               ),
                             ],
                           ),
@@ -273,10 +385,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     const Divider(height: 24),
                     TextField(
                       controller: _botTokenCtrl,
+                      obscureText: true,
                       decoration: InputDecoration(
                         border: const OutlineInputBorder(),
-                        labelText: isPersian ? 'توکن ربات تلگرام (Bot Token)' : 'Telegram Bot Token',
-                        hintText: '123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ',
+                        labelText: isPersian ? 'توکن ربات تلگرام (Bot Token)' : 'Bot Token',
+                        hintText: '123456789:ABCdefGHIjklMNO...',
                         prefixIcon: const Icon(Icons.token),
                       ),
                     ),
@@ -285,30 +398,52 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       controller: _channelIdCtrl,
                       decoration: InputDecoration(
                         border: const OutlineInputBorder(),
-                        labelText: isPersian ? 'آیدی کانال مقصد (مثلاً @MyChannel یا -100...)' : 'Channel Username / ID',
-                        hintText: '@MyConfigChannel',
-                        prefixIcon: const Icon(Icons.tag),
+                        labelText: isPersian ? 'آیدی کانال مقصد (Channel ID / Username)' : 'Channel Username / ID',
+                        hintText: '@MyConfigChannel or -1001234567890',
+                        prefixIcon: const Icon(Icons.campaign),
                       ),
                     ),
                     const SizedBox(height: 12),
+                    // Custom Caption / Message
+                    TextField(
+                      controller: _captionCtrl,
+                      maxLines: 3,
+                      decoration: InputDecoration(
+                        border: const OutlineInputBorder(),
+                        labelText: isPersian ? 'متن و کپشن سفارشی ارسالی به همراه فایل‌ها' : 'Custom Telegram Message / Caption',
+                        hintText: isPersian ? 'متن توضیحات، آدرس کانال، تاریخ و هدر دلخواه...' : 'Custom header, footer or notes...',
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    CheckboxListTile(
+                      title: Text(isPersian ? 'ارسال فایل‌های خروجی (کلش، ایکس‌ری و سینگ‌باکس)' : 'Send Export Files'),
+                      value: _sendFiles,
+                      onChanged: (v) => setState(() => _sendFiles = v ?? true),
+                      controlAffinity: ListTileControlAffinity.leading,
+                      contentPadding: EdgeInsets.zero,
+                    ),
+                    CheckboxListTile(
+                      title: Text(isPersian ? 'ارسال گزارش آماری خلاصه نتایج' : 'Send Summary Stats Report'),
+                      value: _sendSummary,
+                      onChanged: (v) => setState(() => _sendSummary = v ?? true),
+                      controlAffinity: ListTileControlAffinity.leading,
+                      contentPadding: EdgeInsets.zero,
+                    ),
+                    const SizedBox(height: 8),
                     Row(
                       children: [
                         FilledButton.tonalIcon(
                           onPressed: _testBotConnection,
-                          icon: const Icon(Icons.network_check),
-                          label: Text(isPersian ? 'تست اتصال ربات' : 'Test Connection'),
+                          icon: const Icon(Icons.wifi_find),
+                          label: Text(isPersian ? 'تست اتصال ربات' : 'Test Bot Connection'),
                         ),
-                        const SizedBox(width: 12),
-                        if (_botTestStatus.isNotEmpty)
-                          Expanded(
-                            child: Text(
-                              _botTestStatus,
-                              style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                color: _botTestStatus.startsWith('✅') ? Colors.green : Colors.red,
-                              ),
-                            ),
+                        const SizedBox(width: 16),
+                        Expanded(
+                          child: Text(
+                            _botTestStatus,
+                            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
                           ),
+                        ),
                       ],
                     ),
                   ],
@@ -318,51 +453,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           const SizedBox(height: 16),
 
-          // Section 3: Sent History Deduplication
+          // Section 4: CPU Hardware Architecture Profiles
           Card(
-            child: Padding(
-              padding: const EdgeInsets.all(20.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Row(
-                        children: [
-                          const Icon(Icons.history, color: Colors.purple, size: 28),
-                          const SizedBox(width: 12),
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                isPersian ? 'حافظه عدم تکرار (Sent History)' : 'Sent History Deduplication',
-                                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                              ),
-                              Text(
-                                isPersian
-                                    ? 'جلوگیری از ارسال دوباره کانفیگ‌های تکراری به کانال تلگرام'
-                                    : 'Prevent re-posting already sent configs to your Telegram channel',
-                                style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                      Switch(
-                        value: _dedupEnabled,
-                        onChanged: (v) => setState(() => _dedupEnabled = v),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
+            elevation: 0,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+              side: BorderSide(color: Colors.orangeAccent.withOpacity(0.35)),
             ),
-          ),
-          const SizedBox(height: 16),
-
-          // Section 4: Mihomo Core Management
-          Card(
+            color: Theme.of(context).cardColor,
             child: Padding(
               padding: const EdgeInsets.all(20.0),
               child: Column(
@@ -370,75 +468,63 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 children: [
                   Row(
                     children: [
-                      const Icon(Icons.memory, color: Colors.orange, size: 28),
+                      const Icon(Icons.memory, color: Colors.orangeAccent, size: 28),
                       const SizedBox(width: 12),
                       Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            isPersian ? 'مدیریت هسته میهومو (Mihomo Core Manager)' : 'Mihomo Core Management',
+                            isPersian ? 'پروفایل معماری پردازنده میهومو (CPU Architecture)' : 'CPU Architecture Profile',
                             style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
                           ),
                           Text(
-                            isPersian ? 'معماری شناسایی‌شده پردازنده سیستم شما: $_detectedArch' : 'Detected CPU: $_detectedArch',
-                            style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold, fontSize: 12),
+                            isPersian ? 'معماری تشخیص داده شده سیستم شما: $_detectedArch' : 'Detected System Architecture: $_detectedArch',
+                            style: TextStyle(color: Colors.grey.shade400, fontSize: 12),
                           ),
                         ],
                       ),
                     ],
                   ),
-                  const Divider(height: 20),
-                  Text(isPersian ? 'انتخاب نسخه هسته:' : 'Core Variant:'),
+                  const Divider(height: 24),
                   RadioListTile<String>(
-                    title: Text(isPersian ? 'تشخیص خودکار و هوشمند (Auto - پیشنهادی)' : 'Auto Detect (Recommended)'),
-                    subtitle: Text(isPersian ? 'استفاده از نسخه بهینه متناسب با پشتیبانی AVX2 سی‌پی‌یو' : 'Chooses optimal version for CPU features'),
-                    value: 'auto',
+                    title: Text(isPersian ? '۱. windows-amd64 (مدرن با AVX/AVX2 - حداکثر بازدهی)' : '1. windows-amd64 (Modern AVX/AVX2)'),
+                    subtitle: Text(
+                      isPersian ? 'مناسب برای اکثر سیستم‌های جدید ۶۴ بیتی اینتل و AMD' : 'Recommended for modern 64-bit Intel & AMD processors',
+                      style: TextStyle(color: Colors.grey.shade400, fontSize: 12),
+                    ),
+                    value: 'windows-amd64',
                     groupValue: _preferredArch,
                     onChanged: (v) => setState(() => _preferredArch = v!),
                   ),
                   RadioListTile<String>(
-                    title: const Text('windows-amd64 (حداکثر سرعت با دستورات AVX2)'),
-                    value: 'amd64',
+                    title: Text(isPersian ? '۲. windows-amd64-compatible (سازگاری عمومی بدون کرش)' : '2. windows-amd64-compatible'),
+                    subtitle: Text(
+                      isPersian ? 'مناسب برای پردازنده‌های قدیمی‌تر فاقد AVX2 جهت جلوگیری از بسته شدن برنامه' : 'Universal compatibility for older 64-bit CPUs',
+                      style: TextStyle(color: Colors.grey.shade400, fontSize: 12),
+                    ),
+                    value: 'windows-amd64-compatible',
                     groupValue: _preferredArch,
                     onChanged: (v) => setState(() => _preferredArch = v!),
                   ),
                   RadioListTile<String>(
-                    title: const Text('windows-amd64-compatible (سازگاری عمومی با همه پردازنده‌ها)'),
-                    value: 'compatible',
+                    title: Text(isPersian ? '۳. windows-arm64 (سرفیس پرو و پردازنده‌های اسنپ‌دراگون)' : '3. windows-arm64 (Surface / Snapdragon)'),
+                    subtitle: Text(
+                      isPersian ? 'مناسب برای ویندوزهای مبتنی بر معماری ARM64' : 'Native binary for ARM64 Windows PCs',
+                      style: TextStyle(color: Colors.grey.shade400, fontSize: 12),
+                    ),
+                    value: 'windows-arm64',
                     groupValue: _preferredArch,
                     onChanged: (v) => setState(() => _preferredArch = v!),
                   ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-
-          // Section 5: Hardware Profile
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(20.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    isPersian ? 'پروفایل سخت‌افزاری و توان سیستم' : 'Hardware Profile',
-                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                  ),
-                  const Divider(height: 20),
                   RadioListTile<String>(
-                    title: Text(isPersian ? 'سیستم متوسط (پیش‌فرض پیشنهادی)' : 'Medium PC (Balanced)'),
-                    subtitle: Text(isPersian ? 'همزمانی تست: ۳۰ | مصرف رم حدود ۲۵۰ مگابایت' : 'Concurrency: 30 | ~250MB RAM'),
-                    value: 'medium',
-                    groupValue: _profile,
-                    onChanged: (v) => setState(() => _profile = v!),
-                  ),
-                  RadioListTile<String>(
-                    title: Text(isPersian ? 'سیستم قوی یا سرور مجازی' : 'Strong PC / Cloud Server'),
-                    subtitle: Text(isPersian ? 'همزمانی تست: ۱۰۰ | حداکثر سرعت استخراج' : 'Concurrency: 100 | Maximum speed'),
-                    value: 'strong',
-                    groupValue: _profile,
-                    onChanged: (v) => setState(() => _profile = v!),
+                    title: Text(isPersian ? '۴. windows-386 (سیستم‌های ۳۲ بیتی)' : '4. windows-386 (32-bit Legacy)'),
+                    subtitle: Text(
+                      isPersian ? 'سازگار با ویندوزهای قدیمی ۳۲ بیتی' : 'Legacy 32-bit Windows systems',
+                      style: TextStyle(color: Colors.grey.shade400, fontSize: 12),
+                    ),
+                    value: 'windows-386',
+                    groupValue: _preferredArch,
+                    onChanged: (v) => setState(() => _preferredArch = v!),
                   ),
                 ],
               ),

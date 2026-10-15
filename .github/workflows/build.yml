@@ -74,6 +74,9 @@ jobs:
           Copy-Item -Path "app/build/windows/x64/runner/Release/*" -Destination $dist -Recurse
           Copy-Item -Path "bin/ccli.exe" -Destination $dist
           if (Test-Path "config/settings.json") { Copy-Item -Path "config/settings.json" -Destination $dist }
+          if (Test-Path "$dist/app.exe") {
+            Rename-Item -Path "$dist/app.exe" -NewName "FreedomConfigCollector_v2.0.0.exe"
+          }
           Compress-Archive -Path "$dist/*" -DestinationPath "FreedomConfigCollector_Windows_x64.zip" -Force
 
       - name: Upload Windows Artifact

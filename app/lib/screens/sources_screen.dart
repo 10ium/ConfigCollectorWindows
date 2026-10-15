@@ -110,19 +110,24 @@ class _SourcesScreenState extends State<SourcesScreen> {
         children: [
           // Banner
           Card(
-            color: Colors.blue.shade50,
+            elevation: 0,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+              side: BorderSide(color: Colors.blue.withOpacity(0.3)),
+            ),
+            color: Theme.of(context).cardColor,
             child: Padding(
               padding: const EdgeInsets.all(16.0),
               child: Row(
                 children: [
-                  const Icon(Icons.info_outline, color: Colors.blue),
+                  const Icon(Icons.info_outline, color: Colors.blueAccent),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Text(
                       isPersian
                           ? 'نام این بخش طبق استاندارد به «پروکسی پروایدر» (Proxy Provider) به‌روزرسانی شد. می‌توانید لینک‌های اشتراک و کانال‌های تلگرام را در هر سطر جداگانه وارد کنید.'
                           : 'Sources updated to "Proxy Provider". Enter subscription links and Telegram channels one per line.',
-                      style: const TextStyle(color: Colors.blue),
+                      style: const TextStyle(color: Colors.blueAccent),
                     ),
                   ),
                 ],

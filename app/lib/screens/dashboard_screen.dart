@@ -11,6 +11,10 @@ class DashboardScreen extends StatefulWidget {
 class _DashboardScreenState extends State<DashboardScreen> {
   final ConfigService _config = ConfigService();
 
+  // Stats view mode: 'both' (سالم / کل), 'alive' (فقط سالم), 'found' (فقط پیداشده)
+  String _statsMode = 'both';
+  bool _showAllProtocols = true;
+
   @override
   void initState() {
     super.initState();
@@ -41,6 +45,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             tooltip: isPersian ? 'بارگذاری مجدد تنظیمات' : 'Reload Settings',
             onPressed: () => _config.loadSettings(),
           ),
+          const SizedBox(width: 8),
         ],
       ),
       body: SingleChildScrollView(
@@ -50,9 +55,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
           children: [
             // Start / Stop Hero Card
             Card(
-              color: _config.isRunning
-                  ? Colors.red.shade50
-                  : Theme.of(context).colorScheme.primaryContainer.withOpacity(0.4),
+              elevation: 0,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+                side: BorderSide(
+                  color: _config.isRunning
+                      ? Colors.red.withOpacity(0.5)
+                      : Theme.of(context).colorScheme.primary.withOpacity(0.3),
+                ),
+              ),
+              color: Theme.of(context).cardColor,
               child: Padding(
                 padding: const EdgeInsets.all(20.0),
                 child: Column(
@@ -83,7 +95,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               Text(
                                 _config.statusMessage,
                                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                      color: Colors.grey.shade700,
+                                      color: Colors.grey.shade400,
                                     ),
                               ),
                             ],
@@ -113,7 +125,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     ),
                     if (_config.isRunning) ...[
                       const SizedBox(height: 16),
-                      LinearProgressIndicator(value: _config.progress),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: LinearProgressIndicator(value: _config.progress, minHeight: 8),
+                      ),
                     ],
                   ],
                 ),
@@ -121,60 +136,78 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ),
             const SizedBox(height: 20),
 
-            // Source Filter Row
+            // Source Selector & Stats Mode Controls
             Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(
-                  isPersian ? 'آمار زنده بر اساس منبع:' : 'Live Metrics by Source:',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
-                ),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.grey.shade300),
-                  ),
-                  child: DropdownButtonHideUnderline(
-                    child: DropdownButton<String>(
-                      value: _config.selectedSourceFilter,
-                      items: [
-                        DropdownMenuItem(
-                          value: 'all',
-                          child: Text(isPersian ? '📊 همه منابع (کامل)' : 'All Sources'),
-                        ),
-                        DropdownMenuItem(
-                          value: 'telegram',
-                          child: Text(isPersian ? '📢 کانال‌های تلگرام' : 'Telegram Channels'),
-                        ),
-                        DropdownMenuItem(
-                          value: 'subscription',
-                          child: Text(isPersian ? '🌐 پروکسی پروایدرها' : 'Proxy Providers'),
-                        ),
-                        DropdownMenuItem(
-                          value: 'local_folder',
-                          child: Text(isPersian ? '📁 پوشه محلی' : 'Local Folder'),
-                        ),
-                      ],
-                      onChanged: (val) {
-                        if (val != null) _config.setSourceFilter(val);
-                      },
+                // Specific Source Filter Dropdown
+                Expanded(
+                  flex: 3,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).cardColor,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: Colors.grey.withOpacity(0.3)),
                     ),
+                    child: DropdownButtonHideUnderline(
+                      child: DropdownButton<String>(
+                        isExpanded: true,
+                        value: _config.availableSourceItems.any((e) => e['id'] == _config.selectedSourceFilter)
+                            ? _config.selectedSourceFilter
+                            : 'all',
+                        items: _config.availableSourceItems.map((item) {
+                          return DropdownMenuItem<String>(
+                            value: item['id'],
+                            child: Text(
+                              item['title']!,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontSize: 13),
+                            ),
+                          );
+                        }).toList(),
+                        onChanged: (val) {
+                          if (val != null) _config.setSourceFilter(val);
+                        },
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 16),
+                // Mode Toggle: Both vs Alive vs Found
+                Expanded(
+                  flex: 2,
+                  child: SegmentedButton<String>(
+                    segments: [
+                      ButtonSegment(
+                        value: 'both',
+                        label: Text(isPersian ? 'سالم / کل' : 'Alive/All'),
+                      ),
+                      ButtonSegment(
+                        value: 'alive',
+                        label: Text(isPersian ? 'فقط سالم' : 'Alive Only'),
+                      ),
+                      ButtonSegment(
+                        value: 'found',
+                        label: Text(isPersian ? 'فقط پیداشده' : 'Found Only'),
+                      ),
+                    ],
+                    selected: {_statsMode},
+                    onSelectionChanged: (set) => setState(() => _statsMode = set.first),
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 16),
 
-            // Top Metrics Grid
+            // Top Summary Cards
             Row(
               children: [
                 _buildMetricCard(
                   context,
-                  title: isPersian ? 'کشف‌شده' : 'Found',
+                  title: isPersian ? 'کل کشف‌شده' : 'Total Found',
                   value: '${_config.foundCount}',
                   icon: Icons.search,
-                  color: Colors.blue,
+                  color: Colors.blueAccent,
                 ),
                 const SizedBox(width: 12),
                 _buildMetricCard(
@@ -182,7 +215,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   title: isPersian ? 'بررسی‌شده' : 'Tested',
                   value: '${_config.testedCount}',
                   icon: Icons.checklist_rtl,
-                  color: Colors.orange,
+                  color: Colors.orangeAccent,
                 ),
                 const SizedBox(width: 12),
                 _buildMetricCard(
@@ -190,7 +223,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   title: isPersian ? 'سالم و تاییدشده' : 'Survivors',
                   value: '${_config.aliveCount}',
                   icon: Icons.verified,
-                  color: Colors.green,
+                  color: Colors.greenAccent.shade400,
                 ),
                 const SizedBox(width: 12),
                 _buildMetricCard(
@@ -198,22 +231,42 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   title: isPersian ? 'میانگین تاخیر' : 'Avg Latency',
                   value: _config.avgPing > 0 ? '${_config.avgPing.toStringAsFixed(0)} ms' : '-',
                   icon: Icons.speed,
-                  color: Colors.purple,
+                  color: Colors.purpleAccent,
                 ),
               ],
             ),
             const SizedBox(height: 24),
 
-            // Card 1: Protocols Breakdown
-            _buildBreakdownCard(
+            // Group 1: Mihomo Core Native Protocols
+            _buildProtocolCategoryCard(
               context,
-              title: isPersian ? 'آمار تفکیک پروتکل‌ها' : 'Protocols Breakdown',
-              icon: Icons.share,
-              color: Colors.indigo,
-              items: _config.protocolStats,
-              isProtocol: true,
+              title: isPersian ? 'پروتکل‌های رسمی میهومو (Mihomo Core)' : 'Mihomo Core Protocols',
+              icon: Icons.dns,
+              color: Colors.cyanAccent.shade700,
+              protocols: ConfigService.mihomoProtocols,
+              showToggle: true,
             ),
             const SizedBox(height: 16),
+
+            // Group 2: DNS & Tunnel Protocols (From Decryptor)
+            _buildProtocolCategoryCard(
+              context,
+              title: isPersian ? 'پروتکل‌های دی‌ان‌اس و تونلینگ (DNS & Tunnels)' : 'DNS & Tunnel Protocols',
+              icon: Icons.vpn_lock,
+              color: Colors.amberAccent.shade700,
+              protocols: ConfigService.dnsTunnelProtocols,
+            ),
+            const SizedBox(height: 16),
+
+            // Group 3: Telegram Dedicated Proxies
+            _buildProtocolCategoryCard(
+              context,
+              title: isPersian ? 'پروکسی‌های اختصاصی تلگرام (Telegram Proxies)' : 'Telegram Dedicated Proxies',
+              icon: Icons.send_rounded,
+              color: Colors.lightBlueAccent,
+              protocols: ConfigService.telegramProtocols,
+            ),
+            const SizedBox(height: 20),
 
             // Row with Transport & Security Cards
             Row(
@@ -224,7 +277,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     context,
                     title: isPersian ? 'بستر انتقال (Transport)' : 'Transport Breakdown',
                     icon: Icons.alt_route,
-                    color: Colors.teal,
+                    color: Colors.tealAccent.shade400,
                     items: _config.transportStats,
                   ),
                 ),
@@ -234,7 +287,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     context,
                     title: isPersian ? 'امنیت و رمزنگاری (Security)' : 'Security & Encryption',
                     icon: Icons.security,
-                    color: Colors.amber.shade800,
+                    color: Colors.orangeAccent,
                     items: _config.securityStats,
                   ),
                 ),
@@ -255,6 +308,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }) {
     return Expanded(
       child: Card(
+        elevation: 0,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: BorderSide(color: Colors.grey.withOpacity(0.2)),
+        ),
+        color: Theme.of(context).cardColor,
         child: Padding(
           padding: const EdgeInsets.all(16.0),
           child: Column(
@@ -265,7 +324,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 children: [
                   Text(
                     title,
-                    style: TextStyle(color: Colors.grey.shade700, fontSize: 13),
+                    style: TextStyle(color: Colors.grey.shade400, fontSize: 13),
                   ),
                   Icon(icon, color: color, size: 22),
                 ],
@@ -286,22 +345,32 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  bool _showAllProtocols = true;
-
-  Widget _buildBreakdownCard(
+  Widget _buildProtocolCategoryCard(
     BuildContext context, {
     required String title,
     required IconData icon,
     required Color color,
-    required Map<String, int> items,
-    bool isProtocol = false,
+    required List<String> protocols,
+    bool showToggle = false,
   }) {
     final isPersian = Localizations.localeOf(context).languageCode == 'fa';
-    final entries = isProtocol && !_showAllProtocols
-        ? items.entries.where((e) => e.value > 0).toList()
-        : items.entries.toList();
+
+    final displayed = protocols.where((p) {
+      if (!_showAllProtocols && showToggle) {
+        final found = _config.foundStats[p] ?? 0;
+        final alive = _config.aliveStats[p] ?? 0;
+        return (found > 0 || alive > 0);
+      }
+      return true;
+    }).toList();
 
     return Card(
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: BorderSide(color: Colors.grey.withOpacity(0.25)),
+      ),
+      color: Theme.of(context).cardColor,
       child: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Column(
@@ -320,15 +389,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     ),
                   ],
                 ),
-                if (isProtocol)
+                if (showToggle)
                   TextButton.icon(
                     style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
                     onPressed: () => setState(() => _showAllProtocols = !_showAllProtocols),
                     icon: Icon(_showAllProtocols ? Icons.filter_alt : Icons.list_alt, size: 16),
                     label: Text(
                       _showAllProtocols
-                          ? (isPersian ? 'نمایش فقط موارد شناسایی‌شده' : 'Show Active Only')
-                          : (isPersian ? 'نمایش تمام ۲۷ پروتکل میهومو' : 'Show All 27 Protocols'),
+                          ? (isPersian ? 'فقط موارد فعال' : 'Active Only')
+                          : (isPersian ? 'نمایش همه ۲۴ پروتکل' : 'Show All 24'),
                       style: const TextStyle(fontSize: 12),
                     ),
                   ),
@@ -338,16 +407,100 @@ class _DashboardScreenState extends State<DashboardScreen> {
             Wrap(
               spacing: 8,
               runSpacing: 8,
-              children: entries.map((e) {
+              children: displayed.map((p) {
+                final found = _config.foundStats[p] ?? 0;
+                final alive = _config.aliveStats[p] ?? 0;
+                final hasAny = (found > 0 || alive > 0);
+
+                String countLabel;
+                if (_statsMode == 'alive') {
+                  countLabel = '$alive';
+                } else if (_statsMode == 'found') {
+                  countLabel = '$found';
+                } else {
+                  countLabel = '$alive / $found';
+                }
+
+                return Chip(
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  avatar: CircleAvatar(
+                    backgroundColor: hasAny ? color.withOpacity(0.25) : Colors.grey.shade800,
+                    child: Text(
+                      countLabel,
+                      style: TextStyle(
+                        fontSize: 9,
+                        color: hasAny ? color : Colors.grey.shade400,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                  label: Text(
+                    p,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: hasAny ? FontWeight.bold : FontWeight.normal,
+                      color: hasAny ? Colors.white : Colors.grey.shade500,
+                    ),
+                  ),
+                  backgroundColor: hasAny
+                      ? color.withOpacity(0.12)
+                      : Colors.transparent,
+                  side: BorderSide(
+                    color: hasAny ? color.withOpacity(0.4) : Colors.grey.withOpacity(0.2),
+                  ),
+                );
+              }).toList(),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBreakdownCard(
+    BuildContext context, {
+    required String title,
+    required IconData icon,
+    required Color color,
+    required Map<String, int> items,
+  }) {
+    return Card(
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: BorderSide(color: Colors.grey.withOpacity(0.25)),
+      ),
+      color: Theme.of(context).cardColor,
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(icon, color: color, size: 20),
+                const SizedBox(width: 8),
+                Text(
+                  title,
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                ),
+              ],
+            ),
+            const Divider(height: 20),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: items.entries.map((e) {
                 final hasCount = e.value > 0;
                 return Chip(
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                   avatar: CircleAvatar(
-                    backgroundColor: hasCount ? color : Colors.grey.shade300,
+                    backgroundColor: hasCount ? color.withOpacity(0.25) : Colors.grey.shade800,
                     child: Text(
                       '${e.value}',
                       style: TextStyle(
                         fontSize: 10,
-                        color: hasCount ? Colors.white : Colors.black87,
+                        color: hasCount ? color : Colors.grey.shade400,
                         fontWeight: FontWeight.bold,
                       ),
                     ),
@@ -357,12 +510,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     style: TextStyle(
                       fontSize: 12,
                       fontWeight: hasCount ? FontWeight.bold : FontWeight.normal,
-                      color: hasCount ? Colors.black87 : Colors.grey.shade600,
+                      color: hasCount ? Colors.white : Colors.grey.shade500,
                     ),
                   ),
-                  backgroundColor: hasCount
-                      ? color.withOpacity(0.12)
-                      : Colors.grey.shade100,
+                  backgroundColor: hasCount ? color.withOpacity(0.12) : Colors.transparent,
+                  side: BorderSide(
+                    color: hasCount ? color.withOpacity(0.4) : Colors.grey.withOpacity(0.2),
+                  ),
                 );
               }).toList(),
             ),

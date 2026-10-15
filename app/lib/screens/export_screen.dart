@@ -12,60 +12,102 @@ class ExportScreen extends StatefulWidget {
 class _ExportScreenState extends State<ExportScreen> {
   final ConfigService _config = ConfigService();
 
-  // Export formats selection
-  bool _exportClash = true;
-  bool _exportXrayRaw = true;
-  bool _exportXrayB64 = true;
-  bool _exportSingbox = true;
+  // Export mode for Mihomo: 'full_config' (Default) vs 'proxy_provider'
+  String _mihomoExportType = 'full_config';
+
+  // Overall limit for Mihomo config
+  int _totalMaxProxies = 600;
+  bool _totalMaxUnlimited = false;
 
   // Filter settings
   double _minScore = 0.0;
   bool _onlyGemini = false;
   bool _filterPreviouslySent = true;
 
+  // Protocol priority order (Reorderable / Drag & Drop)
+  List<String> _protocolPriority = [];
+
   // Per-protocol limits
-  int _vlessCap = 50;
-  int _hy2Cap = 30;
-  int _trojanCap = 30;
-  int _vmessCap = 20;
+  Map<String, int> _protocolLimits = {};
+
+  // System Tray & Quiet Hours
+  bool _minimizeToTray = true;
+  bool _quietHoursEnabled = false;
+  late TextEditingController _quietStartCtrl;
+  late TextEditingController _quietEndCtrl;
 
   @override
   void initState() {
     super.initState();
+    _quietStartCtrl = TextEditingController(text: '23:00');
+    _quietEndCtrl = TextEditingController(text: '07:00');
     _loadFromConfig();
   }
 
   void _loadFromConfig() {
     final of = _config.settings['output_filters'] ?? {};
+    _mihomoExportType = of['export_type'] ?? 'full_config';
+    _totalMaxProxies = of['total_max_proxies'] ?? 600;
+    _totalMaxUnlimited = of['total_max_unlimited'] ?? false;
     _minScore = (of['min_score'] ?? 0.0).toDouble();
     _onlyGemini = of['only_gemini_passed'] ?? false;
     _filterPreviouslySent = of['filter_previously_sent'] ?? true;
 
-    final caps = of['per_protocol_limits'] ?? {};
-    _vlessCap = caps['vless'] ?? 50;
-    _hy2Cap = caps['hysteria2'] ?? 30;
-    _trojanCap = caps['trojan'] ?? 30;
-    _vmessCap = caps['vmess'] ?? 20;
+    final rawPriority = of['protocol_priority'] as List?;
+    if (rawPriority != null && rawPriority.isNotEmpty) {
+      _protocolPriority = rawPriority.map((e) => e.toString()).toList();
+    } else {
+      _protocolPriority = List.from(ConfigService.allCategorizedProtocols);
+    }
+
+    final rawLimits = of['per_protocol_limits'] as Map<String, dynamic>? ?? {};
+    _protocolLimits = {};
+    for (final p in _protocolPriority) {
+      _protocolLimits[p] = (rawLimits[p] ?? 0) as int;
+    }
+    if (_protocolLimits['VLESS'] == 0) _protocolLimits['VLESS'] = 100;
+    if (_protocolLimits['Hysteria 2'] == 0) _protocolLimits['Hysteria 2'] = 100;
+    if (_protocolLimits['Trojan'] == 0) _protocolLimits['Trojan'] = 80;
+    if (_protocolLimits['VMess'] == 0) _protocolLimits['VMess'] = 60;
+
+    final tray = _config.settings['system_tray'] ?? {};
+    _minimizeToTray = tray['minimize_to_tray_on_close'] ?? true;
+
+    final qh = _config.settings['quiet_hours'] ?? {};
+    _quietHoursEnabled = qh['enabled'] ?? false;
+    _quietStartCtrl.text = qh['start_time'] ?? '23:00';
+    _quietEndCtrl.text = qh['end_time'] ?? '07:00';
+  }
+
+  @override
+  void dispose() {
+    _quietStartCtrl.dispose();
+    _quietEndCtrl.dispose();
+    super.dispose();
   }
 
   void _saveFilters() {
     final isPersian = Localizations.localeOf(context).languageCode == 'fa';
 
+    _config.updateSetting('output_filters', 'export_type', _mihomoExportType);
+    _config.updateSetting('output_filters', 'total_max_proxies', _totalMaxProxies);
+    _config.updateSetting('output_filters', 'total_max_unlimited', _totalMaxUnlimited);
     _config.updateSetting('output_filters', 'min_score', _minScore);
     _config.updateSetting('output_filters', 'only_gemini_passed', _onlyGemini);
     _config.updateSetting('output_filters', 'filter_previously_sent', _filterPreviouslySent);
-    _config.updateSetting('output_filters', 'per_protocol_limits', {
-      'vless': _vlessCap,
-      'hysteria2': _hy2Cap,
-      'trojan': _trojanCap,
-      'vmess': _vmessCap,
-    });
+    _config.updateSetting('output_filters', 'protocol_priority', _protocolPriority);
+    _config.updateSetting('output_filters', 'per_protocol_limits', _protocolLimits);
+
+    _config.updateSetting('system_tray', 'minimize_to_tray_on_close', _minimizeToTray);
+    _config.updateNestedSetting('quiet_hours', 'enabled', _quietHoursEnabled);
+    _config.updateNestedSetting('quiet_hours', 'start_time', _quietStartCtrl.text.trim());
+    _config.updateNestedSetting('quiet_hours', 'end_time', _quietEndCtrl.text.trim());
 
     _config.saveSettings();
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(isPersian ? 'تنظیمات فیلترهای خروجی با موفقیت ذخیره شد.' : 'Output filter settings saved.'),
+        content: Text(isPersian ? 'تنظیمات فیلترهای خروجی با موفقیت ذخیره شد.' : 'Output settings saved successfully.'),
         backgroundColor: Colors.green,
       ),
     );
@@ -87,9 +129,14 @@ class _ExportScreenState extends State<ExportScreen> {
       final singboxDir = Directory('output/singbox');
       if (!singboxDir.existsSync()) singboxDir.createSync(recursive: true);
 
-      // Create sample export files if empty
-      File('output/clash/proxies.yaml').writeAsStringSync('proxies:\n  - name: "sample-proxy"\n    type: vless\n    server: 1.1.1.1\n    port: 443\n');
-      File('output/xray/all_raw.txt').writeAsStringSync('vless://example@1.1.1.1:443?security=reality#Sample\n');
+      // Generate Clash output based on selected export type
+      if (_mihomoExportType == 'full_config') {
+        File('output/clash/config.yaml').writeAsStringSync(
+          'port: 7890\nsocks-port: 7891\nmixed-port: 7892\nmode: rule\nlog-level: info\nexternal-controller: 127.0.0.1:9090\nproxies:\n  - name: "sample-vless"\n    type: vless\n    server: 1.1.1.1\n    port: 443\nproxy-groups:\n  - name: "🚀 انتخاب خودکار"\n    type: url-test\n    url: http://www.gstatic.com/generate_204\n    interval: 300\n    proxies:\n      - sample-vless\nrules:\n  - MATCH,🚀 انتخاب خودکار\n',
+        );
+      }
+      File('output/clash/proxies.yaml').writeAsStringSync('proxies:\n  - name: "sample-vless"\n    type: vless\n    server: 1.1.1.1\n    port: 443\n');
+      File('output/xray/all_raw.txt').writeAsStringSync('vless://sample@1.1.1.1:443?security=reality#Sample\n');
       File('output/xray/all_base64.txt').writeAsStringSync('ZG14bGMzTXZMM1YyY21scFpUMHhibXN2YTI5eQ==\n');
       File('output/singbox/outbounds.json').writeAsStringSync('{\n  "outbounds": []\n}\n');
 
@@ -112,7 +159,7 @@ class _ExportScreenState extends State<ExportScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(isPersian ? 'خروجی‌ها، فیلترها و سقف پروتکل‌ها' : 'Export Formats & Protocol Caps'),
+        title: Text(isPersian ? 'خروجی‌ها، اولویت‌بندی و سقف پروتکل‌ها' : 'Exports, Priority & Protocol Caps'),
         actions: [
           FilledButton.icon(
             onPressed: _saveFilters,
@@ -125,23 +172,29 @@ class _ExportScreenState extends State<ExportScreen> {
       body: ListView(
         padding: const EdgeInsets.all(24.0),
         children: [
-          // Banner
+          // Banner Card
           Card(
-            color: Colors.teal.shade50,
+            elevation: 0,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+              side: BorderSide(color: Colors.tealAccent.withOpacity(0.35)),
+            ),
+            color: Theme.of(context).cardColor,
             child: Padding(
               padding: const EdgeInsets.all(16.0),
               child: Row(
                 children: [
-                  const Icon(Icons.folder_zip, color: Colors.teal, size: 32),
+                  const Icon(Icons.folder_zip, color: Colors.tealAccent, size: 32),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Text(
                       isPersian
                           ? 'نرم‌افزار خروجی‌ها را همزمان در فرمت‌های استاندارد کلش، ایکس‌ری راو، بیس‌۶۴ و سینگ‌باکس در پوشه‌های تفکیک‌شده تولید می‌کند.'
                           : 'Generates exports in Clash, Xray Raw, Base64, and Sing-box formats simultaneously in organized folders.',
-                      style: const TextStyle(color: Colors.teal),
+                      style: TextStyle(color: Colors.grey.shade300, fontSize: 13),
                     ),
                   ),
+                  const SizedBox(width: 8),
                   FilledButton.tonalIcon(
                     onPressed: _generateExportFiles,
                     icon: const Icon(Icons.download),
@@ -153,41 +206,86 @@ class _ExportScreenState extends State<ExportScreen> {
           ),
           const SizedBox(height: 16),
 
-          // Output Formats Checkbox Card
+          // Section 1: Mihomo Export Type (Full Config vs Proxy Provider)
           Card(
+            elevation: 0,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+              side: BorderSide(color: Colors.cyanAccent.withOpacity(0.35)),
+            ),
+            color: Theme.of(context).cardColor,
             child: Padding(
               padding: const EdgeInsets.all(20.0),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    isPersian ? 'فرمت‌های فعال جهت استخراج' : 'Active Export Formats',
-                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                  Row(
+                    children: [
+                      const Icon(Icons.tune, color: Colors.cyanAccent, size: 26),
+                      const SizedBox(width: 10),
+                      Text(
+                        isPersian ? 'نوع کانفیگ خروجی میهومو (Mihomo Configuration Type)' : 'Mihomo Export Format',
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                      ),
+                    ],
                   ),
-                  const Divider(height: 20),
-                  CheckboxListTile(
-                    title: Text(isPersian ? '۱. پروکسی پروایدر کلش (Clash / Mihomo YAML)' : '1. Clash / Mihomo Proxy Provider (YAML)'),
-                    subtitle: Text(isPersian ? 'ذخیره در output/clash/proxies.yaml جهت FlClash و Verge' : 'Saved to output/clash/proxies.yaml'),
-                    value: _exportClash,
-                    onChanged: (v) => setState(() => _exportClash = v!),
+                  const Divider(height: 24),
+                  RadioListTile<String>(
+                    title: Text(isPersian ? '۱. کانفیگ کامل میهومو (Full Config - پیشنهادی)' : '1. Full Mihomo Config (Recommended)'),
+                    subtitle: Text(
+                      isPersian
+                          ? 'شامل پورت‌های ترکیبی، DNS محلی، رول‌های تفکیک ترافیک ایران و گروه‌های پروکسی (Auto-Select، Fallback، انتخاب دستی)'
+                          : 'Complete importable config with mixed-port, DNS, smart rules, and auto-select proxy groups.',
+                      style: TextStyle(color: Colors.grey.shade400, fontSize: 12),
+                    ),
+                    value: 'full_config',
+                    groupValue: _mihomoExportType,
+                    onChanged: (v) => setState(() => _mihomoExportType = v!),
                   ),
-                  CheckboxListTile(
-                    title: Text(isPersian ? '۲. لینک‌های خام ایکس‌ری (Xray Raw Links)' : '2. Xray Raw Links (vless://, ...)'),
-                    subtitle: Text(isPersian ? 'ذخیره در output/xray/all_raw.txt' : 'Saved to output/xray/all_raw.txt'),
-                    value: _exportXrayRaw,
-                    onChanged: (v) => setState(() => _exportXrayRaw = v!),
+                  RadioListTile<String>(
+                    title: Text(isPersian ? '۲. پروکسی پروایدر (Proxy Provider YAML)' : '2. Proxy Provider YAML'),
+                    subtitle: Text(
+                      isPersian
+                          ? 'فقط لیست نودهای سالم در قالب استاندارد کلش برای استفاده به عنوان سابسکریپشن/پروایدر در کلاینت‌ها'
+                          : 'Pure proxies array for use as a remote provider inside existing configs.',
+                      style: TextStyle(color: Colors.grey.shade400, fontSize: 12),
+                    ),
+                    value: 'proxy_provider',
+                    groupValue: _mihomoExportType,
+                    onChanged: (v) => setState(() => _mihomoExportType = v!),
                   ),
-                  CheckboxListTile(
-                    title: Text(isPersian ? '۳. سابسکریپشن بیس‌۶۴ (Xray Base64)' : '3. Xray Base64 Subscription'),
-                    subtitle: Text(isPersian ? 'ذخیره در output/xray/all_base64.txt مناسب v2rayN' : 'Saved to output/xray/all_base64.txt'),
-                    value: _exportXrayB64,
-                    onChanged: (v) => setState(() => _exportXrayB64 = v!),
-                  ),
-                  CheckboxListTile(
-                    title: Text(isPersian ? '۴. کانفیگ سینگ‌باکس (Sing-box Outbounds JSON)' : '4. Sing-box JSON Outbounds'),
-                    subtitle: Text(isPersian ? 'ذخیره در output/singbox/outbounds.json' : 'Saved to output/singbox/outbounds.json'),
-                    value: _exportSingbox,
-                    onChanged: (v) => setState(() => _exportSingbox = v!),
+                  const SizedBox(height: 12),
+                  // Total Maximum Cap for Mihomo Config
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              isPersian
+                                  ? 'سقف کل تعداد نودها در خروجی میهومو: ${_totalMaxUnlimited ? "نامحدود" : "$_totalMaxProxies نود"}'
+                                  : 'Total Proxy Cap: ${_totalMaxUnlimited ? "Unlimited" : "$_totalMaxProxies proxies"}',
+                              style: const TextStyle(fontWeight: FontWeight.bold),
+                            ),
+                            if (!_totalMaxUnlimited)
+                              Slider(
+                                min: 50,
+                                max: 2000,
+                                divisions: 39,
+                                value: _totalMaxProxies.toDouble(),
+                                onChanged: (v) => setState(() => _totalMaxProxies = v.toInt()),
+                              ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      FilterChip(
+                        label: Text(isPersian ? 'تعداد نامحدود' : 'Unlimited'),
+                        selected: _totalMaxUnlimited,
+                        onSelected: (val) => setState(() => _totalMaxUnlimited = val),
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -195,19 +293,141 @@ class _ExportScreenState extends State<ExportScreen> {
           ),
           const SizedBox(height: 16),
 
-          // Output Filtering Panel
+          // Section 2: Drag & Drop Protocol Priority & Per-Protocol Caps
           Card(
+            elevation: 0,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+              side: BorderSide(color: Colors.indigoAccent.withOpacity(0.35)),
+            ),
+            color: Theme.of(context).cardColor,
+            child: Padding(
+              padding: const EdgeInsets.all(20.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(Icons.drag_indicator, color: Colors.indigoAccent, size: 26),
+                          const SizedBox(width: 10),
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                isPersian ? 'اولویت‌بندی پروتکل‌ها (چینش با جابجایی) و سقف اختصاصی' : 'Protocol Priority (Drag & Drop) & Limits',
+                                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                              ),
+                              Text(
+                                isPersian
+                                    ? 'پروتکل‌های بالاتر در خروجی اولویت دارند؛ می‌توانید با نگه‌داشتن و کشیدن ترتیب را عوض کنید.'
+                                    : 'Higher items fill the export quota first. Drag items to reorder priority.',
+                                style: TextStyle(color: Colors.grey.shade400, fontSize: 12),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                  const Divider(height: 20),
+                  SizedBox(
+                    height: 380,
+                    child: ReorderableListView.builder(
+                      shrinkWrap: true,
+                      itemCount: _protocolPriority.length,
+                      onReorder: (oldIndex, newIndex) {
+                        setState(() {
+                          if (newIndex > oldIndex) newIndex -= 1;
+                          final item = _protocolPriority.removeAt(oldIndex);
+                          _protocolPriority.insert(newIndex, item);
+                        });
+                      },
+                      itemBuilder: (context, index) {
+                        final proto = _protocolPriority[index];
+                        final cap = _protocolLimits[proto] ?? 0;
+
+                        return Container(
+                          key: ValueKey(proto),
+                          margin: const EdgeInsets.symmetric(vertical: 3),
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: Theme.of(context).scaffoldBackgroundColor,
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: Colors.grey.withOpacity(0.2)),
+                          ),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.drag_handle, color: Colors.grey, size: 20),
+                              const SizedBox(width: 12),
+                              Text(
+                                '#${index + 1}',
+                                style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.blueAccent),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Text(
+                                  proto,
+                                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                                ),
+                              ),
+                              Text(
+                                isPersian ? 'سقف:' : 'Cap:',
+                                style: TextStyle(fontSize: 12, color: Colors.grey.shade400),
+                              ),
+                              const SizedBox(width: 8),
+                              SizedBox(
+                                width: 70,
+                                height: 36,
+                                child: TextFormField(
+                                  initialValue: '$cap',
+                                  keyboardType: TextInputType.number,
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+                                  decoration: InputDecoration(
+                                    contentPadding: const EdgeInsets.symmetric(vertical: 6),
+                                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(6)),
+                                    hintText: '۰ = نامحدود',
+                                  ),
+                                  onChanged: (v) {
+                                    final parsed = int.tryParse(v.trim()) ?? 0;
+                                    _protocolLimits[proto] = parsed;
+                                  },
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // Section 3: General Output Filters (Score, Gemini, Deduplication)
+          Card(
+            elevation: 0,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+              side: BorderSide(color: Colors.amberAccent.withOpacity(0.35)),
+            ),
+            color: Theme.of(context).cardColor,
             child: Padding(
               padding: const EdgeInsets.all(20.0),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    isPersian ? 'فیلترهای شخصی‌سازی خروجی' : 'Output Filtering Conditions',
+                    isPersian ? 'فیلترهای کیفی خروجی' : 'Quality Filters',
                     style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
                   ),
                   const Divider(height: 20),
-                  Text(isPersian ? 'شرط حداقل امتیاز: ${_minScore.toStringAsFixed(1)}' : 'Min Score: ${_minScore.toStringAsFixed(1)}'),
+                  Text(isPersian ? 'حداقل امتیاز نود: ${_minScore.toInt()} از ۱۰۰' : 'Min Composite Score: ${_minScore.toInt()} / 100'),
                   Slider(
                     min: 0,
                     max: 100,
@@ -216,14 +436,14 @@ class _ExportScreenState extends State<ExportScreen> {
                     onChanged: (v) => setState(() => _minScore = v),
                   ),
                   SwitchListTile(
-                    title: Text(isPersian ? 'فقط کانفیگ‌های تاییدشده در تست جمنای' : 'Only Gemini-Unblocked Configs'),
-                    subtitle: Text(isPersian ? 'کانفیگ‌هایی که موفق به باز کردن هوش مصنوعی گوگل شده‌اند' : 'Exclude configs failing Gemini check'),
+                    title: Text(isPersian ? 'فقط کانفیگ‌های تاییدشده توسط هوش مصنوعی جمنای' : 'Only Gemini Passed Configs'),
+                    subtitle: Text(isPersian ? 'صرفاً پروکسی‌هایی که توانسته‌اند با موفقیت سایت یا API جمنای را باز کنند' : 'Only include proxies passing Google Gemini test'),
                     value: _onlyGemini,
                     onChanged: (v) => setState(() => _onlyGemini = v),
                   ),
                   SwitchListTile(
-                    title: Text(isPersian ? 'حافظه عدم تکرار (جلوگیری از کانفیگ‌های قبلاً ارسال‌شده)' : 'Exclude Previously Sent Configs'),
-                    subtitle: Text(isPersian ? 'تطبیق با تاریخچه و عدم قرارگیری کانفیگ‌های تکراری' : 'Match against sent_history.json'),
+                    title: Text(isPersian ? 'حافظه عدم تکرار (عدم ارسال مجدد کانفیگ‌های تکراری)' : 'Deduplication Memory'),
+                    subtitle: Text(isPersian ? 'کانفیگ‌هایی که در دوره‌های قبلی ارسال شده‌اند را نادیده بگیرد' : 'Skip proxies sent in previous sessions'),
                     value: _filterPreviouslySent,
                     onChanged: (v) => setState(() => _filterPreviouslySent = v),
                   ),
@@ -233,61 +453,76 @@ class _ExportScreenState extends State<ExportScreen> {
           ),
           const SizedBox(height: 16),
 
-          // Per-Protocol Caps Card
+          // Section 4: System Tray & Quiet Hours
           Card(
+            elevation: 0,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+              side: BorderSide(color: Colors.grey.withOpacity(0.25)),
+            ),
+            color: Theme.of(context).cardColor,
             child: Padding(
               padding: const EdgeInsets.all(20.0),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    isPersian ? 'سقف تعداد کانفیگ برای هر پروتکل (Protocol Caps)' : 'Max Config Caps Per Protocol',
+                    isPersian ? 'رفتار بستن پنجره و ساعت سکوت' : 'Window Close Behavior & Quiet Hours',
                     style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
                   ),
-                  Text(
-                    isPersian
-                        ? 'تعیین حداکثر تعداد کانفیگی که از هر پروتکل در فایل‌های نهایی قرار می‌گیرد (۰ = نامحدود)'
-                        : 'Set max number of nodes per protocol in the export files (0 = unlimited)',
-                    style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
-                  ),
                   const Divider(height: 20),
-                  Row(
-                    children: [
-                      Expanded(child: _buildCapField('VLESS', _vlessCap, (v) => setState(() => _vlessCap = v))),
-                      const SizedBox(width: 16),
-                      Expanded(child: _buildCapField('Hysteria 2', _hy2Cap, (v) => setState(() => _hy2Cap = v))),
-                    ],
+                  SwitchListTile(
+                    title: Text(isPersian ? 'کوچک شدن به کنار ساعت با زدن ضربدر (Minimize to Tray)' : 'Minimize to System Tray on Close'),
+                    subtitle: Text(
+                      isPersian
+                          ? 'در صورت فعال بودن، با زدن ضربدر پنجره برنامه باز می‌ماند و به سینی کنار ساعت می‌رود. در غیر این صورت کاملاً بسته می‌شود.'
+                          : 'When enabled, clicking window close (X) minimizes to tray instead of quitting.',
+                      style: TextStyle(color: Colors.grey.shade400, fontSize: 12),
+                    ),
+                    value: _minimizeToTray,
+                    onChanged: (v) => setState(() => _minimizeToTray = v),
                   ),
-                  const SizedBox(height: 16),
-                  Row(
-                    children: [
-                      Expanded(child: _buildCapField('Trojan', _trojanCap, (v) => setState(() => _trojanCap = v))),
-                      const SizedBox(width: 16),
-                      Expanded(child: _buildCapField('VMess', _vmessCap, (v) => setState(() => _vmessCap = v))),
-                    ],
+                  SwitchListTile(
+                    title: Text(isPersian ? 'فعال‌سازی ساعت سکوت (Quiet Hours)' : 'Enable Quiet Hours'),
+                    subtitle: Text(
+                      isPersian ? 'در این بازه زمانی هیچ پیامی به تلگرام ارسال نخواهد شد.' : 'Suppresses all notifications and Telegram dispatches during this interval.',
+                      style: TextStyle(color: Colors.grey.shade400, fontSize: 12),
+                    ),
+                    value: _quietHoursEnabled,
+                    onChanged: (v) => setState(() => _quietHoursEnabled = v),
                   ),
+                  if (_quietHoursEnabled) ...[
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: _quietStartCtrl,
+                            decoration: InputDecoration(
+                              border: const OutlineInputBorder(),
+                              labelText: isPersian ? 'شروع سکوت (مثلاً ۲۳:۰۰)' : 'Start Time (e.g. 23:00)',
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 16),
+                        Expanded(
+                          child: TextField(
+                            controller: _quietEndCtrl,
+                            decoration: InputDecoration(
+                              border: const OutlineInputBorder(),
+                              labelText: isPersian ? 'پایان سکوت (مثلاً ۰۷:۰۰)' : 'End Time (e.g. 07:00)',
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
                 ],
               ),
             ),
           ),
         ],
       ),
-    );
-  }
-
-  Widget _buildCapField(String label, int val, Function(int) onChanged) {
-    return TextFormField(
-      initialValue: '$val',
-      keyboardType: TextInputType.number,
-      decoration: InputDecoration(
-        border: const OutlineInputBorder(),
-        labelText: 'حداکثر $label',
-        suffixText: 'عدد',
-      ),
-      onChanged: (text) {
-        final parsed = int.tryParse(text) ?? 0;
-        onChanged(parsed);
-      },
     );
   }
 }

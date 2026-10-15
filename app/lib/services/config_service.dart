@@ -20,8 +20,8 @@ class ConfigService extends ChangeNotifier {
   double _avgPing = 0.0;
   String _selectedSourceFilter = 'all';
 
-  // Complete, Exhaustive List of ALL Protocols Supported by Mihomo (Clash.Meta)
-  static final List<String> allMihomoSupportedProtocols = [
+  // 1. Mihomo Core Native Protocols (24 Protocols)
+  static const List<String> mihomoProtocols = [
     'VLESS',
     'VMess',
     'Trojan',
@@ -45,13 +45,33 @@ class ConfigService extends ChangeNotifier {
     'ZeroTier',
     'Rematch',
     'OpenVPN',
-    'SSH',
     'SOCKS5',
     'HTTP/HTTPS',
-    'DNS Tunnel (DNSTT)',
   ];
 
-  Map<String, int> _protocolStats = {};
+  // 2. DNS & Tunnel Protocols (Extracted by Decryptor)
+  static const List<String> dnsTunnelProtocols = [
+    'DNSTT (SlowDNS)',
+    'DNS over HTTPS (DoH)',
+    'SSH Tunnel',
+  ];
+
+  // 3. Telegram Dedicated Proxies
+  static const List<String> telegramProtocols = [
+    'MTProto (tg://proxy)',
+    'Telegram SOCKS5 (tg://socks)',
+    'Telegram Web/HTTP Proxy',
+  ];
+
+  static List<String> get allCategorizedProtocols => [
+    ...mihomoProtocols,
+    ...dnsTunnelProtocols,
+    ...telegramProtocols,
+  ];
+
+  // Two-level statistics: Discovered (Found) vs Tested (Alive)
+  Map<String, int> _foundStats = {};
+  Map<String, int> _aliveStats = {};
 
   Map<String, int> _transportStats = {
     'TCP': 0,
@@ -84,21 +104,49 @@ class ConfigService extends ChangeNotifier {
   double get avgPing => _avgPing;
   String get selectedSourceFilter => _selectedSourceFilter;
 
-  Map<String, int> get protocolStats => _protocolStats;
+  Map<String, int> get foundStats => _foundStats;
+  Map<String, int> get aliveStats => _aliveStats;
+  Map<String, int> get protocolStats => _aliveStats; // backward compatibility
   Map<String, int> get transportStats => _transportStats;
   Map<String, int> get securityStats => _securityStats;
   List<Map<String, dynamic>> get survivors => _survivors;
 
+  bool get isGoogleLoggedIn => (_settings['tests']?['gemini']?['logged_in'] == true);
+  String get googleAccountEmail => (_settings['tests']?['gemini']?['account_email'] ?? '');
+
   void _initProtocolStats() {
-    _protocolStats = {};
-    for (final p in allMihomoSupportedProtocols) {
-      _protocolStats[p] = 0;
+    _foundStats = {};
+    _aliveStats = {};
+    for (final p in allCategorizedProtocols) {
+      _foundStats[p] = 0;
+      _aliveStats[p] = 0;
     }
   }
 
   void setSourceFilter(String filter) {
     _selectedSourceFilter = filter;
     notifyListeners();
+  }
+
+  List<Map<String, String>> get availableSourceItems {
+    final list = <Map<String, String>>[
+      {'id': 'all', 'title': '📊 همه منابع (کامل)'},
+    ];
+    final sources = _settings['sources'] ?? {};
+    final tgChannels = (sources['telegram']?['channels'] as List?)?.map((e) => e.toString()).toList() ?? [];
+    for (final ch in tgChannels) {
+      list.add({'id': 'tg:$ch', 'title': '📢 تلگرام: $ch'});
+    }
+    final subUrls = (sources['subscriptions']?['urls'] as List?)?.map((e) => e.toString()).toList() ?? [];
+    for (var i = 0; i < subUrls.length; i++) {
+      final uri = Uri.tryParse(subUrls[i]);
+      final host = (uri?.host.isNotEmpty == true) ? uri!.host : 'پرووایدر ${i + 1}';
+      list.add({'id': 'sub:${subUrls[i]}', 'title': '🌐 پرووایدر: $host'});
+    }
+    if (sources['local_folder']?['enabled'] == true) {
+      list.add({'id': 'local', 'title': '📁 فایل‌های محلی'});
+    }
+    return list;
   }
 
   File _findSettingsFile() {
@@ -164,6 +212,13 @@ class ConfigService extends ChangeNotifier {
     notifyListeners();
   }
 
+  void setGoogleLoggedIn(bool loggedIn, [String email = '']) {
+    updateNestedSetting('tests', 'gemini', 'logged_in', loggedIn);
+    updateNestedSetting('tests', 'gemini', 'account_email', email);
+    saveSettings();
+    notifyListeners();
+  }
+
   // Smart Persian & English Number and Time Unit Converter
   static int parseSmartTime(String input, String unit) {
     String sanitized = input
@@ -179,6 +234,38 @@ class ConfigService extends ChangeNotifier {
       return baseVal * 3600;
     }
     return baseVal;
+  }
+
+  Future<Map<String, dynamic>> checkUpdate() async {
+    try {
+      final client = HttpClient();
+      if (_settings['network']?['mode'] == 'system_proxy') {
+        final port = _settings['network']?['proxy_port'] ?? 7890;
+        client.findProxy = (uri) => 'PROXY 127.0.0.1:$port';
+      }
+      final req = await client.getUrl(Uri.parse('https://api.github.com/repos/10ium/ConfigCollectorWindows/releases/latest'));
+      req.headers.set('User-Agent', 'FreedomConfigCollector/2.0');
+      final resp = await req.close();
+      if (resp.statusCode == 200) {
+        final body = await resp.transform(utf8.decoder).join();
+        final json = jsonDecode(body);
+        final tag = json['tag_name'] as String? ?? 'v2.0.0';
+        return {
+          'hasUpdate': tag != 'v2.0.0',
+          'latestVersion': tag,
+          'releaseUrl': json['html_url'] ?? 'https://github.com/10ium/ConfigCollectorWindows',
+          'notes': json['body'] ?? '',
+        };
+      }
+    } catch (e) {
+      debugPrint('Check update error: $e');
+    }
+    return {
+      'hasUpdate': false,
+      'latestVersion': 'v2.0.0',
+      'releaseUrl': 'https://github.com/10ium/ConfigCollectorWindows/tree/v2-develop',
+      'notes': 'شما از آخرین نسخه توسعه استفاده می‌کنید.'
+    };
   }
 
   void startScan() async {
@@ -229,6 +316,27 @@ class ConfigService extends ChangeNotifier {
     _foundCount = 1420;
     _progress = 0.35;
     _statusMessage = 'تست مرحله‌ای پینگ و تاخیر واقعی نودها...';
+
+    // Populate Found Statistics (Raw discovered from sources)
+    _foundStats['VLESS'] = 480;
+    _foundStats['Hysteria 2'] = 260;
+    _foundStats['Trojan'] = 190;
+    _foundStats['VMess'] = 140;
+    _foundStats['TUIC v5/v4'] = 85;
+    _foundStats['Shadowsocks (SS)'] = 75;
+    _foundStats['ShadowsocksR (SSR)'] = 25;
+    _foundStats['WireGuard'] = 40;
+    _foundStats['AmneziaWG'] = 22;
+    _foundStats['MASQUE'] = 16;
+    _foundStats['ShadowTLS v2/v3'] = 18;
+    _foundStats['Snell v1-v5'] = 12;
+    _foundStats['DNSTT (SlowDNS)'] = 32;
+    _foundStats['DNS over HTTPS (DoH)'] = 15;
+    _foundStats['SSH Tunnel'] = 10;
+    _foundStats['MTProto (tg://proxy)'] = 38;
+    _foundStats['Telegram SOCKS5 (tg://socks)'] = 24;
+    _foundStats['Telegram Web/HTTP Proxy'] = 18;
+
     notifyListeners();
 
     await Future.delayed(const Duration(milliseconds: 700));
@@ -244,24 +352,24 @@ class ConfigService extends ChangeNotifier {
     _isRunning = false;
     _statusMessage = 'عملیات با موفقیت پایان یافت. ۲۸۴ پروکسی سالم تایید شد.';
 
-    // Populate statistics for detected protocols
-    _protocolStats['VLESS'] = 112;
-    _protocolStats['Hysteria 2'] = 54;
-    _protocolStats['Trojan'] = 38;
-    _protocolStats['VMess'] = 24;
-    _protocolStats['TUIC v5/v4'] = 16;
-    _protocolStats['Shadowsocks (SS)'] = 14;
-    _protocolStats['WireGuard'] = 10;
-    _protocolStats['AmneziaWG'] = 6;
-    _protocolStats['MASQUE'] = 4;
-    _protocolStats['ShadowTLS v2/v3'] = 4;
-    _protocolStats['Snell v1-v5'] = 2;
-    _protocolStats['AnyTLS'] = 0;
-    _protocolStats['OpenVPN'] = 0;
-    _protocolStats['SSH'] = 0;
-    _protocolStats['SOCKS5'] = 0;
-    _protocolStats['HTTP/HTTPS'] = 0;
-    _protocolStats['DNS Tunnel (DNSTT)'] = 0;
+    // Populate Alive Statistics (Passed real test)
+    _aliveStats['VLESS'] = 112;
+    _aliveStats['Hysteria 2'] = 54;
+    _aliveStats['Trojan'] = 38;
+    _aliveStats['VMess'] = 24;
+    _aliveStats['TUIC v5/v4'] = 16;
+    _aliveStats['Shadowsocks (SS)'] = 14;
+    _aliveStats['WireGuard'] = 10;
+    _aliveStats['AmneziaWG'] = 6;
+    _aliveStats['MASQUE'] = 4;
+    _aliveStats['ShadowTLS v2/v3'] = 4;
+    _aliveStats['Snell v1-v5'] = 2;
+    _aliveStats['DNSTT (SlowDNS)'] = 12;
+    _aliveStats['DNS over HTTPS (DoH)'] = 8;
+    _aliveStats['SSH Tunnel'] = 4;
+    _aliveStats['MTProto (tg://proxy)'] = 18;
+    _aliveStats['Telegram SOCKS5 (tg://socks)'] = 10;
+    _aliveStats['Telegram Web/HTTP Proxy'] = 6;
 
     _transportStats = {
       'TCP': 136,
@@ -284,6 +392,7 @@ class ConfigService extends ChangeNotifier {
       {
         'name': '🇩🇪 DE | VLESS Reality | 95.8★',
         'proto': 'VLESS',
+        'port': 443,
         'transport': 'TCP',
         'security': 'Reality',
         'country': 'DE',
@@ -297,6 +406,7 @@ class ConfigService extends ChangeNotifier {
       {
         'name': '🇫🇮 FI | Hysteria 2 | 93.4★',
         'proto': 'Hysteria 2',
+        'port': 8443,
         'transport': 'QUIC',
         'security': 'TLS',
         'country': 'FI',
@@ -310,6 +420,7 @@ class ConfigService extends ChangeNotifier {
       {
         'name': '🇳🇱 NL | Trojan WS | 90.1★',
         'proto': 'Trojan',
+        'port': 443,
         'transport': 'WS (WebSocket)',
         'security': 'TLS',
         'country': 'NL',
@@ -323,6 +434,7 @@ class ConfigService extends ChangeNotifier {
       {
         'name': '🇺🇸 US | VLESS gRPC | 88.5★',
         'proto': 'VLESS',
+        'port': 2053,
         'transport': 'gRPC',
         'security': 'Reality',
         'country': 'US',
@@ -336,6 +448,7 @@ class ConfigService extends ChangeNotifier {
       {
         'name': '🇬🇧 GB | TUIC v5 | 87.2★',
         'proto': 'TUIC v5/v4',
+        'port': 443,
         'transport': 'QUIC',
         'security': 'TLS',
         'country': 'GB',
@@ -344,6 +457,34 @@ class ConfigService extends ChangeNotifier {
         'udp': true,
         'gemini': true,
         'jitter': 4.5,
+        'packetLoss': 0.0,
+      },
+      {
+        'name': '🇮🇷 IR | DNSTT SlowDNS | 82.0★',
+        'proto': 'DNSTT (SlowDNS)',
+        'port': 53,
+        'transport': 'TCP',
+        'security': 'None',
+        'country': 'IR',
+        'flag': '🇮🇷',
+        'ping': 185.0,
+        'udp': true,
+        'gemini': false,
+        'jitter': 8.0,
+        'packetLoss': 2.0,
+      },
+      {
+        'name': '🇨🇦 CA | Telegram MTProto | 84.1★',
+        'proto': 'MTProto (tg://proxy)',
+        'port': 443,
+        'transport': 'TCP',
+        'security': 'TLS',
+        'country': 'CA',
+        'flag': '🇨🇦',
+        'ping': 130.0,
+        'udp': false,
+        'gemini': false,
+        'jitter': 3.5,
         'packetLoss': 0.0,
       },
     ];
@@ -389,26 +530,54 @@ class ConfigService extends ChangeNotifier {
         'proxy_host': '127.0.0.1',
         'proxy_port': 7890
       },
+      'system_tray': {
+        'minimize_to_tray_on_close': true
+      },
+      'quiet_hours': {
+        'enabled': false,
+        'start_time': '23:00',
+        'end_time': '07:00'
+      },
       'tests': {
         'ping': {
           'enabled': true,
           'test_url': 'http://www.gstatic.com/generate_204',
           'timeout_val': 3,
           'timeout_unit': 's',
-          'concurrency': 30,
+          'concurrency': 50,
           'max_latency_ms': 1500
         },
-        'gemini': {
+        'packet_loss': {
           'enabled': true,
+          'max_loss_percent': 0
+        },
+        'gemini': {
+          'enabled': false,
+          'target': 'both',
+          'logged_in': false,
+          'account_email': '',
           'level': 2,
           'api_key': ''
         },
         'download_speed': {
           'enabled': false,
-          'test_url': 'https://speed.cloudflare.com/__down?bytes=5000000'
+          'test_url': 'https://speed.cloudflare.com/__down?bytes=10485760',
+          'file_size_mb': 10,
+          'min_speed_kbps': 500,
+          'timeout_val': 10
+        },
+        'upload_speed': {
+          'enabled': false,
+          'test_url': 'https://speed.cloudflare.com/__up',
+          'payload_bytes': 1048576,
+          'min_speed_kbps': 200,
+          'timeout_val': 8
         },
         'udp': {'enabled': true},
-        'stability': {'enabled': true},
+        'stability': {
+          'enabled': true,
+          'max_jitter_ms': 120.0
+        },
         'fraud_score': {'enabled': true}
       },
       'testing_rounds': {
@@ -416,13 +585,16 @@ class ConfigService extends ChangeNotifier {
         'interval_between_rounds_sec': 15
       },
       'output_filters': {
+        'export_type': 'full_config',
+        'total_max_proxies': 600,
+        'total_max_unlimited': false,
         'min_score': 0.0,
         'only_gemini_passed': false,
         'per_protocol_limits': {
-          'vless': 50,
-          'hysteria2': 30,
-          'trojan': 30,
-          'vmess': 20
+          'VLESS': 100,
+          'Hysteria 2': 100,
+          'Trojan': 80,
+          'VMess': 60
         },
         'filter_previously_sent': true
       },
@@ -430,7 +602,9 @@ class ConfigService extends ChangeNotifier {
         'enabled': false,
         'bot_token': '',
         'channel_id': '',
-        'send_files': true
+        'custom_caption': '⚡ کانفیگ‌های تازه استخراج‌شده توسط Freedom Config Collector v2',
+        'send_files': true,
+        'send_summary': true
       }
     };
   }

@@ -120,7 +120,7 @@
       "timeout_unit": "s"
     },
     "local_folder": {
-      "enabled": true,
+      "enabled": false,
       "path": "G:\\Ai project\\10Dream\\decryptor\\file for test",
       "allowed_extensions": [
         ".ovpn",
@@ -173,7 +173,7 @@
       "test_url": "http://www.gstatic.com/generate_204",
       "timeout_val": 3,
       "timeout_unit": "s",
-      "concurrency": 30,
+      "concurrency": 50,
       "max_latency_ms": 1500,
       "url_presets": [
         "http://www.gstatic.com/generate_204",
@@ -198,7 +198,10 @@
       "description_fa": "بررسی ۳ سطحی اتصال، عبور از تحریم منطقه گوگل (gemini.google.com/app) و تست API Key",
       "timeout_val": 8,
       "timeout_unit": "s",
-      "concurrency": 15
+      "concurrency": 15,
+      "target": "both",
+      "logged_in": false,
+      "account_email": ""
     },
     "website_accessibility": {
       "enabled": false,
@@ -225,7 +228,9 @@
         "https://speed.cloudflare.com/__down?bytes=5000000",
         "https://speed.cloudflare.com/__down?bytes=10000000",
         "https://raw.githubusercontent.com/10ium/free-config/refs/heads/main/README.md"
-      ]
+      ],
+      "file_size_mb": 10,
+      "min_speed_kbps": 500
     },
     "upload_speed": {
       "enabled": false,
@@ -234,7 +239,8 @@
       "payload_bytes": 1048576,
       "timeout_val": 8,
       "timeout_unit": "s",
-      "concurrency": 5
+      "concurrency": 5,
+      "min_speed_kbps": 200
     },
     "udp": {
       "enabled": true,
@@ -258,13 +264,17 @@
       "description_fa": "بررسی اعتبار آی‌پی کانفیگ و عدم حضور در بلک‌لیست‌ها جهت جلوگیری از کپچا",
       "max_fraud_score": 75,
       "concurrency": 20
+    },
+    "packet_loss": {
+      "enabled": true,
+      "max_loss_percent": 0
     }
   },
   "scoring": {
     "ping_weight": 0.35,
-    "stability_weight": 0.30,
+    "stability_weight": 0.3,
     "udp_weight": 0.15,
-    "cleanliness_weight": 0.20,
+    "cleanliness_weight": 0.2,
     "tie_breaker_enabled": true
   },
   "filters": {
@@ -282,16 +292,71 @@
     "allowed_security": [],
     "allowed_countries": [],
     "per_protocol_limits": {
-      "vless": 0,
-      "vmess": 0,
-      "trojan": 0,
-      "shadowsocks": 0,
-      "hysteria2": 0,
-      "tuic": 0,
-      "openvpn": 0,
-      "wireguard": 0
+      "VLESS": 100,
+      "Hysteria 2": 100,
+      "Trojan": 80,
+      "VMess": 60,
+      "TUIC v5/v4": 0,
+      "Shadowsocks (SS)": 0,
+      "ShadowsocksR (SSR)": 0,
+      "WireGuard": 0,
+      "AmneziaWG": 0,
+      "Snell v1-v5": 0,
+      "ShadowTLS v2/v3": 0,
+      "Mieru": 0,
+      "Sudoku (HTTPMask)": 0,
+      "AnyTLS": 0,
+      "MASQUE": 0,
+      "ShadowQUIC": 0,
+      "TrustTunnel": 0,
+      "EasyTier": 0,
+      "Rematch": 0,
+      "OpenVPN": 0,
+      "SSH": 0,
+      "SOCKS5": 0,
+      "HTTP/HTTPS": 0,
+      "DNSTT (SlowDNS)": 0,
+      "DNS over HTTPS (DoH)": 0,
+      "SSH Tunnel": 0,
+      "MTProto (tg://proxy)": 0,
+      "Telegram SOCKS5 (tg://socks)": 0,
+      "Telegram Web/HTTP Proxy": 0
     },
-    "filter_previously_sent": false
+    "filter_previously_sent": false,
+    "export_type": "full_config",
+    "total_max_proxies": 600,
+    "total_max_unlimited": false,
+    "protocol_priority": [
+      "VLESS",
+      "Hysteria 2",
+      "Trojan",
+      "VMess",
+      "TUIC v5/v4",
+      "Shadowsocks (SS)",
+      "ShadowsocksR (SSR)",
+      "WireGuard",
+      "AmneziaWG",
+      "Snell v1-v5",
+      "ShadowTLS v2/v3",
+      "Mieru",
+      "Sudoku (HTTPMask)",
+      "AnyTLS",
+      "MASQUE",
+      "ShadowQUIC",
+      "TrustTunnel",
+      "EasyTier",
+      "Rematch",
+      "OpenVPN",
+      "SSH",
+      "SOCKS5",
+      "HTTP/HTTPS",
+      "DNSTT (SlowDNS)",
+      "DNS over HTTPS (DoH)",
+      "SSH Tunnel",
+      "MTProto (tg://proxy)",
+      "Telegram SOCKS5 (tg://socks)",
+      "Telegram Web/HTTP Proxy"
+    ]
   },
   "telegram_sender": {
     "enabled": false,
@@ -299,12 +364,21 @@
     "channel_id": "",
     "send_files": true,
     "send_summary": true,
-    "caption": "⚡ کانفیگ‌های تازه استخراج‌شده توسط Freedom Config Collector v2"
+    "caption": "⚡ کانفیگ‌های تازه استخراج‌شده توسط Freedom Config Collector v2",
+    "custom_caption": "⚡ کانفیگ‌های تازه استخراج‌شده توسط Freedom Config Collector v2"
   },
   "exporter": {
     "output_dir": "output",
     "export_clash": true,
     "export_singbox": true,
     "export_xray": true
+  },
+  "system_tray": {
+    "minimize_to_tray_on_close": true
+  },
+  "quiet_hours": {
+    "enabled": false,
+    "start_time": "23:00",
+    "end_time": "07:00"
   }
 }
