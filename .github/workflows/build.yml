@@ -2,7 +2,7 @@ name: Build & Release Freedom Config Collector
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, v2-develop ]
     tags: [ 'v*' ]
   pull_request:
     branches: [ main ]
@@ -20,11 +20,11 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.22'
-          cache-dependency-path: engine/go.sum
 
       - name: Run Engine Tests
         working-directory: engine
         run: |
+          go mod tidy
           go test -v ./...
 
   build-windows:
@@ -48,12 +48,17 @@ jobs:
 
       - name: Compile Go CLI Binary
         working-directory: engine
+        shell: pwsh
         run: |
+          go mod tidy
+          New-Item -ItemType Directory -Path ../bin -Force | Out-Null
           go build -ldflags="-s -w" -o ../bin/ccli.exe ./cmd/ccli
 
       - name: Build Flutter Windows Desktop
         working-directory: app
+        shell: pwsh
         run: |
+          flutter create . --platforms=windows,android --org com.freedom
           flutter pub get
           flutter build windows --release
 
@@ -61,11 +66,11 @@ jobs:
         shell: pwsh
         run: |
           $dist = "dist/FreedomConfigCollector_Windows_x64"
-          New-Item -ItemType Directory -Path $dist -Force
+          New-Item -ItemType Directory -Path $dist -Force | Out-Null
           Copy-Item -Path "app/build/windows/x64/runner/Release/*" -Destination $dist -Recurse
           Copy-Item -Path "bin/ccli.exe" -Destination $dist
-          Copy-Item -Path "config/settings.json" -Destination $dist
-          Compress-Archive -Path "$dist/*" -DestinationPath "FreedomConfigCollector_Windows_x64.zip"
+          if (Test-Path "config/settings.json") { Copy-Item -Path "config/settings.json" -Destination $dist }
+          Compress-Archive -Path "$dist/*" -DestinationPath "FreedomConfigCollector_Windows_x64.zip" -Force
 
       - name: Upload Windows Artifact
         uses: actions/upload-artifact@v4
@@ -96,6 +101,7 @@ jobs:
       - name: Build Flutter Android APK
         working-directory: app
         run: |
+          flutter create . --platforms=windows,android --org com.freedom
           flutter pub get
           flutter build apk --release
 

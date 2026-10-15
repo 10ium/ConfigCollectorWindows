@@ -116,7 +116,8 @@
         "https://raw.githubusercontent.com/10ium/multi-proxy-config-fetcher/refs/heads/main/configs/proxy_configs.txt",
         "https://raw.githubusercontent.com/10ium/V2RayAggregator/refs/heads/master/Eternity.txt"
       ],
-      "timeout_sec": 12
+      "timeout_val": 12,
+      "timeout_unit": "s"
     },
     "local_folder": {
       "enabled": true,
@@ -141,75 +142,122 @@
     }
   },
   "network": {
-    "mode": "proxy",
+    "mode": "system_proxy",
     "proxy_host": "127.0.0.1",
     "proxy_port": 7890,
     "proxy_type": "http"
   },
+  "core_manager": {
+    "channel": "stable",
+    "preferred_arch": "auto",
+    "auto_update": false
+  },
+  "scheduler": {
+    "enabled": false,
+    "interval_val": 60,
+    "interval_unit": "min",
+    "quiet_hours_enabled": false,
+    "quiet_start": "02:00",
+    "quiet_end": "07:00"
+  },
+  "testing_rounds": {
+    "rounds_count": 1,
+    "interval_between_rounds_sec": 15,
+    "min_passed_rounds": 1
+  },
   "tests": {
     "ping": {
       "enabled": true,
-      "name_fa": "سنجش پینگ و زمان پاسخ (Ping Test)",
+      "name_fa": "سنجش تاخیر واقعی اتصال (Real Delay / URL Test)",
       "description_fa": "ارسال درخواست بررسی اتصال و سنجش زمان تاخیر اتصال به سرور (میلی‌ثانیه)",
-      "timeout_sec": 3,
-      "max_latency_ms": 1500
+      "test_url": "http://www.gstatic.com/generate_204",
+      "timeout_val": 3,
+      "timeout_unit": "s",
+      "concurrency": 30,
+      "max_latency_ms": 1500,
+      "url_presets": [
+        "http://www.gstatic.com/generate_204",
+        "https://cp.cloudflare.com/generate_204",
+        "https://www.apple.com/library/test/success.html",
+        "https://www.google.com/generate_204"
+      ]
     },
     "geo_flag": {
       "enabled": true,
       "name_fa": "تشخیص کشور و پرچم (Geo & Flag Emoji)",
       "description_fa": "تشخیص موقعیت جغرافیایی و افزودن پرچم اموجی کشور به ابتدای نام کانفیگ",
+      "concurrency": 25,
       "naming_format": "{flag} {country} | {proto} | {score}★"
     },
     "gemini": {
       "enabled": false,
+      "level": 2,
+      "api_key": "",
+      "cookies_str": "",
       "name_fa": "تست هوش مصنوعی جمنای گوگل (Google Gemini)",
-      "description_fa": "بررسی باز شدن بدون فیلتر و عملکرد هوش مصنوعی جمنای گوگل از طریق کانفیگ",
-      "timeout_sec": 8
+      "description_fa": "بررسی ۳ سطحی اتصال، عبور از تحریم منطقه گوگل (gemini.google.com/app) و تست API Key",
+      "timeout_val": 8,
+      "timeout_unit": "s",
+      "concurrency": 15
     },
     "website_accessibility": {
       "enabled": false,
       "name_fa": "تست دسترسی به وب‌سایت‌های دلخواه (Website Accessibility)",
       "description_fa": "سنجش باز شدن و فیلتر نبودن مجموعه‌ای از سایت‌های منتخب و مهم کاربر",
-      "timeout_sec": 6,
+      "timeout_val": 6,
+      "timeout_unit": "s",
+      "concurrency": 15,
       "sites": [
         "https://www.youtube.com/generate_204",
         "https://telegram.org",
-        "https://gemini.google.com",
         "https://x.com"
       ]
     },
     "download_speed": {
       "enabled": false,
       "name_fa": "سنجش سرعت دانلود (Download Speed)",
-      "description_fa": "تست دریافت ترافیک واقعی از CDN کلودفلر و محاسبه پهنای باند دانلود",
+      "description_fa": "تست دریافت ترافیک واقعی از سرور و محاسبه پهنای باند دانلود",
       "test_url": "https://speed.cloudflare.com/__down?bytes=5000000",
-      "duration_sec": 5
+      "duration_val": 5,
+      "duration_unit": "s",
+      "concurrency": 5,
+      "url_presets": [
+        "https://speed.cloudflare.com/__down?bytes=5000000",
+        "https://speed.cloudflare.com/__down?bytes=10000000",
+        "https://raw.githubusercontent.com/10ium/free-config/refs/heads/main/README.md"
+      ]
     },
     "upload_speed": {
       "enabled": false,
       "name_fa": "سنجش سرعت آپلود (Upload Speed)",
       "description_fa": "ارسال بسته آزمایشی و محاسبه سرعت بارگذاری داده‌ها",
       "payload_bytes": 1048576,
-      "timeout_sec": 8
+      "timeout_val": 8,
+      "timeout_unit": "s",
+      "concurrency": 5
     },
     "udp": {
       "enabled": true,
       "name_fa": "بررسی پروتکل UDP (گیمینگ و تماس صوتی)",
       "description_fa": "بررسی انتقال بسته‌های UDP مناسب برای بازی‌های آنلاین، دیسکورد و تماس‌های صوتی/تصویری",
-      "timeout_sec": 3
+      "timeout_val": 3,
+      "timeout_unit": "s",
+      "concurrency": 30
     },
     "stability": {
       "enabled": true,
       "name_fa": "سنجش پایداری و نوسان پینگ (Stability & Jitter)",
       "description_fa": "چندین بار آزمایش پشت سر هم برای اطمینان از عدم قطعی لحظه‌ای و نوسان کم",
       "probe_count": 3,
-      "max_jitter_ms": 120.0
+      "max_jitter_ms": 120.0,
+      "concurrency": 20
     },
     "fraud_score": {
       "enabled": true,
       "name_fa": "نمره تمیزی آی‌پی (Fraud Score & Clean IP)",
       "description_fa": "بررسی اعتبار آی‌پی کانفیگ و عدم حضور در بلک‌لیست‌ها جهت جلوگیری از کپچا",
-      "max_fraud_score": 75
+      "max_fraud_score": 75,
+      "concurrency": 20
     }
   },
   "scoring": {
@@ -226,10 +274,37 @@
     "limit_max_configs": false,
     "max_configs_count": 500
   },
+  "output_filters": {
+    "min_score": 0.0,
+    "only_gemini_passed": false,
+    "allowed_protocols": [],
+    "allowed_transports": [],
+    "allowed_security": [],
+    "allowed_countries": [],
+    "per_protocol_limits": {
+      "vless": 0,
+      "vmess": 0,
+      "trojan": 0,
+      "shadowsocks": 0,
+      "hysteria2": 0,
+      "tuic": 0,
+      "openvpn": 0,
+      "wireguard": 0
+    },
+    "filter_previously_sent": false
+  },
+  "telegram_sender": {
+    "enabled": false,
+    "bot_token": "",
+    "channel_id": "",
+    "send_files": true,
+    "send_summary": true,
+    "caption": "⚡ کانفیگ‌های تازه استخراج‌شده توسط Freedom Config Collector v2"
+  },
   "exporter": {
     "output_dir": "output",
-    "export_clash_provider": true,
-    "export_clash_full": true,
-    "export_raw_links": true
+    "export_clash": true,
+    "export_singbox": true,
+    "export_xray": true
   }
 }

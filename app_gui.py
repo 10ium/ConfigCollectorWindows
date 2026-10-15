@@ -15,6 +15,7 @@ import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import urllib.parse
 import subprocess
+import shutil
 
 if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
@@ -22,16 +23,52 @@ if sys.stderr and hasattr(sys.stderr, 'reconfigure'):
     sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 
 PORT = 12059
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+if getattr(sys, 'frozen', False):
+    BASE_DIR = os.path.dirname(os.path.abspath(sys.executable))
+else:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 SETTINGS_PATH = os.path.join(BASE_DIR, "config", "settings.json")
 OUTPUT_DIR = os.path.join(BASE_DIR, "output")
+TOOLS_DIR = os.path.join(BASE_DIR, "tools")
+BIN_DIR = os.path.join(BASE_DIR, "bin")
+
+# Import local tools
+sys.path.insert(0, TOOLS_DIR)
+try:
+    import core_manager
+except ImportError:
+    core_manager = None
+try:
+    import unit_parser
+except ImportError:
+    unit_parser = None
+try:
+    import gemini_tester
+except ImportError:
+    gemini_tester = None
+try:
+    import telegram_sender
+except ImportError:
+    telegram_sender = None
+try:
+    import exporter
+except ImportError:
+    exporter = None
 
 RUNNER_STATE = {
     "running": False,
     "progress": 0,
     "status_text": "آماده به کار",
-    "logs": [],
+    "logs": ["[System] Freedom Config Collector Engine v2 آماده است."],
     "last_result": None
+}
+
+CORE_DOWNLOAD_STATE = {
+    "downloading": False,
+    "progress": 0,
+    "status_text": "آماده",
+    "error": None
 }
 
 def load_settings():
@@ -53,17 +90,33 @@ def save_settings(data):
         print("Save settings error:", e)
         return False
 
+def get_python_exe():
+    py_exe = sys.executable
+    if not py_exe.lower().endswith("python.exe") and not py_exe.lower().endswith("pythonw.exe"):
+        for cand in [
+            r"C:\Users\Alborz\AppData\Local\Programs\Python\Python312\python.exe",
+            r"C:\Python314\python.exe",
+            r"C:\Python314\pythonw.exe"
+        ]:
+            if os.path.exists(cand):
+                return cand
+    return py_exe
+
 def run_collector_task():
     global RUNNER_STATE
+    if RUNNER_STATE["running"]:
+        return
     RUNNER_STATE["running"] = True
     RUNNER_STATE["progress"] = 5
     RUNNER_STATE["status_text"] = "در حال آغاز فرآیند استخراج..."
-    RUNNER_STATE["logs"] = ["🚀 فرآیند استخراج، رمزگشایی و تست هوشمند آغاز شد."]
+    RUNNER_STATE["logs"].append("🚀 فرآیند جمع‌آوری، رمزگشایی و آزمون‌های هوشمند آغاز شد.")
 
     try:
         runner_script = os.path.join(BASE_DIR, "tools", "comprehensive_test_runner.py")
+        py_exe = get_python_exe()
+
         proc = subprocess.Popen(
-            [sys.executable, "-u", runner_script],
+            [py_exe, "-u", runner_script],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -80,27 +133,30 @@ def run_collector_task():
             if len(RUNNER_STATE["logs"]) > 250:
                 RUNNER_STATE["logs"].pop(0)
 
-            if "Container Decryption" in l:
+            if "Decrypting container files" in l:
                 RUNNER_STATE["progress"] = 25
-                RUNNER_STATE["status_text"] = "در حال رمزگشایی فایل‌های کانتینر (.hat, .ehi, .npvt)..."
+                RUNNER_STATE["status_text"] = "در حال رمزگشایی کانتینرها (.hat, .ehi, .npvt)..."
             elif "Parsing" in l and "files" in l:
                 RUNNER_STATE["progress"] = 40
                 RUNNER_STATE["status_text"] = "در حال تحلیل فایل‌های متنی و OpenVPN..."
+            elif "Fetching Telegram" in l:
+                RUNNER_STATE["progress"] = 50
+                RUNNER_STATE["status_text"] = "در حال استخراج از کانال‌های تلگرام..."
             elif "Fetching Subscription" in l:
-                RUNNER_STATE["progress"] = 55
-                RUNNER_STATE["status_text"] = "در حال دریافت سابسکریپشن‌های اینترنتی..."
+                RUNNER_STATE["progress"] = 60
+                RUNNER_STATE["status_text"] = "در حال دریافت لینک‌های سابسکریپشن..."
             elif "Applying Filters" in l:
-                RUNNER_STATE["progress"] = 70
+                RUNNER_STATE["progress"] = 72
                 RUNNER_STATE["status_text"] = "در حال فیلتر کانفیگ‌های منقضی و تکراری..."
             elif "Running Multi-Probe" in l:
-                RUNNER_STATE["progress"] = 80
-                RUNNER_STATE["status_text"] = "در حال تست اتصال و سنجش پینگ کانفیگ‌ها..."
+                RUNNER_STATE["progress"] = 82
+                RUNNER_STATE["status_text"] = "در حال سنجش اتصال، پینگ و کشور کانفیگ‌ها..."
             elif "Calculating Comprehensive Analytics" in l:
                 RUNNER_STATE["progress"] = 92
                 RUNNER_STATE["status_text"] = "در حال محاسبه رتبه‌بندی و آمار تحلیلی..."
             elif "Exporting Clash" in l:
                 RUNNER_STATE["progress"] = 97
-                RUNNER_STATE["status_text"] = "در حال ساخت فایل‌های نهایی میهومو..."
+                RUNNER_STATE["status_text"] = "در حال ساخت فایل‌های نهایی میهومو و پرووایدر..."
 
         proc.wait()
         RUNNER_STATE["progress"] = 100
@@ -122,30 +178,66 @@ def run_collector_task():
     finally:
         RUNNER_STATE["running"] = False
 
+# Background Scheduler Loop
+def scheduler_worker():
+    while True:
+        time.sleep(10)
+        s = load_settings()
+        sched = s.get("scheduler", {})
+        if not sched.get("enabled", False):
+            continue
+        
+        # Check quiet hours
+        if sched.get("quiet_hours_enabled", False):
+            now_str = time.strftime("%H:%M")
+            q_start = sched.get("quiet_start", "02:00")
+            q_end = sched.get("quiet_end", "07:00")
+            if q_start <= q_end:
+                if q_start <= now_str <= q_end:
+                    continue
+            else:
+                if now_str >= q_start or now_str <= q_end:
+                    continue
+
+        # Check interval
+        interval_val = float(sched.get("interval_val", 60))
+        interval_unit = sched.get("interval_unit", "min")
+        interval_sec = interval_val * 60.0 if interval_unit in ["min", "دقیقه"] else interval_val * 3600.0
+        
+        last_run = sched.get("_last_run_timestamp", 0)
+        if time.time() - last_run >= interval_sec:
+            if not RUNNER_STATE["running"]:
+                sched["_last_run_timestamp"] = time.time()
+                save_settings(s)
+                run_collector_task()
+
+threading.Thread(target=scheduler_worker, daemon=True).start()
+
 HTML_TEMPLATE = r"""<!DOCTYPE html>
 <html lang="fa" dir="rtl">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Freedom Config Collector v2</title>
+    <link rel="icon" type="image/png" href="/app_icon.png">
     <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;700;800&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet">
     <style>
         :root {
-            --md-sys-color-primary: #a8c7fa;
-            --md-sys-color-on-primary: #062e6f;
-            --md-sys-color-primary-container: #0842a0;
-            --md-sys-color-on-primary-container: #d3e3fd;
-            --md-sys-color-surface: #121316;
-            --md-sys-color-surface-dim: #1a1c1e;
-            --md-sys-color-surface-bright: #282a2d;
-            --md-sys-color-surface-container: #1e2023;
-            --md-sys-color-surface-container-high: #2d3034;
-            --md-sys-color-on-surface: #e2e2e6;
-            --md-sys-color-on-surface-variant: #c4c7c5;
-            --md-sys-color-outline: #8e918f;
-            --md-sys-color-success: #6dd58c;
-            --md-sys-color-error: #f2b8b5;
-            --md-sys-color-warning: #fdd663;
+            --md-sys-color-primary: #38bdf8;
+            --md-sys-color-on-primary: #082f49;
+            --md-sys-color-primary-container: #0369a1;
+            --md-sys-color-on-primary-container: #e0f2fe;
+            --md-sys-color-surface: #0b0f19;
+            --md-sys-color-surface-dim: #111827;
+            --md-sys-color-surface-bright: #1f2937;
+            --md-sys-color-surface-container: #1e293b;
+            --md-sys-color-surface-container-high: #334155;
+            --md-sys-color-on-surface: #f1f5f9;
+            --md-sys-color-on-surface-variant: #94a3b8;
+            --md-sys-color-outline: #475569;
+            --md-sys-color-success: #4ade80;
+            --md-sys-color-error: #f87171;
+            --md-sys-color-warning: #fbbf24;
         }
 
         * {
@@ -168,12 +260,12 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 
         header {
             background: var(--md-sys-color-surface-container);
-            padding: 16px 24px;
+            padding: 14px 24px;
             display: flex;
             align-items: center;
             justify-content: space-between;
             border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
         }
 
         .header-title {
@@ -182,20 +274,27 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             gap: 12px;
         }
 
+        .header-title img {
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+        }
+
         .header-title h1 {
-            font-size: 20px;
-            font-weight: 700;
+            font-size: 19px;
+            font-weight: 800;
             color: var(--md-sys-color-primary);
+            letter-spacing: -0.5px;
         }
 
         .header-title .badge {
-            background: rgba(168, 199, 250, 0.15);
+            background: rgba(56, 189, 248, 0.15);
             color: var(--md-sys-color-primary);
             padding: 3px 10px;
             border-radius: 12px;
             font-size: 11px;
             font-weight: 600;
-            border: 1px solid rgba(168, 199, 250, 0.3);
+            border: 1px solid rgba(56, 189, 248, 0.3);
         }
 
         .tabs {
@@ -204,6 +303,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             padding: 6px 16px;
             gap: 8px;
             border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            overflow-x: auto;
         }
 
         .tab-btn {
@@ -212,13 +312,14 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             color: var(--md-sys-color-on-surface-variant);
             padding: 10px 18px;
             border-radius: 20px;
-            font-size: 14px;
+            font-size: 13.5px;
             font-weight: 500;
             cursor: pointer;
             transition: all 0.2s ease;
             display: flex;
             align-items: center;
             gap: 8px;
+            white-space: nowrap;
         }
 
         .tab-btn:hover {
@@ -235,7 +336,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         .container {
             flex: 1;
             padding: 24px;
-            max-width: 1300px;
+            max-width: 1350px;
             margin: 0 auto;
             width: 100%;
         }
@@ -259,7 +360,8 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             border-radius: 16px;
             padding: 20px;
             margin-bottom: 20px;
-            border: 1px solid rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
         }
 
         .card-header {
@@ -290,6 +392,12 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             gap: 16px;
         }
 
+        .grid-4 {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 14px;
+        }
+
         .stat-card {
             background: var(--md-sys-color-surface-dim);
             border-radius: 14px;
@@ -315,9 +423,9 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             background: var(--md-sys-color-primary);
             color: var(--md-sys-color-on-primary);
             border: none;
-            padding: 12px 24px;
+            padding: 11px 22px;
             border-radius: 24px;
-            font-size: 14px;
+            font-size: 13.5px;
             font-weight: 700;
             cursor: pointer;
             display: inline-flex;
@@ -345,7 +453,25 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         }
 
         .btn-outline:hover {
-            background: rgba(168, 199, 250, 0.1);
+            background: rgba(56, 189, 248, 0.1);
+        }
+
+        .btn-preset {
+            background: var(--md-sys-color-surface-dim);
+            color: var(--md-sys-color-on-surface);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            padding: 8px 16px;
+            border-radius: 18px;
+            font-size: 12.5px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .btn-preset:hover, .btn-preset.active {
+            background: rgba(56, 189, 248, 0.15);
+            border-color: var(--md-sys-color-primary);
+            color: var(--md-sys-color-primary);
         }
 
         .progress-bar-container {
@@ -360,18 +486,18 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         .progress-bar-fill {
             height: 100%;
             width: 0%;
-            background: linear-gradient(90deg, #3871e0, #6dd58c);
+            background: linear-gradient(90deg, #0284c7, #4ade80);
             transition: width 0.3s ease;
         }
 
         .terminal {
-            background: #090a0c;
+            background: #060911;
             border-radius: 12px;
             padding: 14px;
             font-family: 'Roboto Mono', monospace;
             font-size: 12px;
             color: #d1d5db;
-            height: 260px;
+            height: 250px;
             overflow-y: auto;
             border: 1px solid rgba(255, 255, 255, 0.08);
             line-height: 1.6;
@@ -394,7 +520,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         }
 
         .switch-row:hover {
-            border-color: rgba(168, 199, 250, 0.2);
+            border-color: rgba(56, 189, 248, 0.2);
         }
 
         .switch-info {
@@ -416,7 +542,6 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             color: var(--md-sys-color-on-surface-variant);
         }
 
-        /* Toggle switch */
         .switch {
             position: relative;
             display: inline-block;
@@ -434,12 +559,9 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         .slider {
             position: absolute;
             cursor: pointer;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background-color: #3e4247;
-            transition: .25s;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background-color: #334155;
+            transition: .3s;
             border-radius: 26px;
         }
 
@@ -451,7 +573,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             left: 3px;
             bottom: 3px;
             background-color: white;
-            transition: .25s;
+            transition: .3s;
             border-radius: 50%;
         }
 
@@ -466,23 +588,23 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 
         .form-group {
             margin-bottom: 16px;
-            display: flex;
-            flex-direction: column;
-            gap: 6px;
         }
 
         .form-group label {
+            display: block;
             font-size: 13px;
             font-weight: 600;
             color: var(--md-sys-color-on-surface-variant);
+            margin-bottom: 6px;
         }
 
-        .input-text, .textarea-text {
+        .input-text, .textarea-text, .select-box {
+            width: 100%;
             background: var(--md-sys-color-surface-dim);
-            border: 1px solid rgba(255, 255, 255, 0.12);
-            border-radius: 10px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
             color: var(--md-sys-color-on-surface);
             padding: 10px 14px;
+            border-radius: 10px;
             font-size: 13px;
             outline: none;
             transition: border-color 0.2s ease;
@@ -490,8 +612,21 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             user-select: text;
         }
 
-        .input-text:focus, .textarea-text:focus {
+        .input-text:focus, .textarea-text:focus, .select-box:focus {
             border-color: var(--md-sys-color-primary);
+        }
+
+        .unit-group {
+            display: flex;
+            gap: 8px;
+        }
+
+        .unit-group input {
+            flex: 2;
+        }
+
+        .unit-group select {
+            flex: 1;
         }
 
         .textarea-text {
@@ -500,32 +635,6 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             font-family: 'Roboto Mono', monospace;
             line-height: 1.5;
             direction: ltr;
-        }
-
-        .chip-container {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 8px;
-            margin-top: 8px;
-        }
-
-        .chip {
-            background: var(--md-sys-color-surface-dim);
-            padding: 6px 12px;
-            border-radius: 16px;
-            font-size: 12px;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            cursor: pointer;
-        }
-
-        .chip.active {
-            background: rgba(168, 199, 250, 0.15);
-            border-color: var(--md-sys-color-primary);
-            color: var(--md-sys-color-primary);
-            font-weight: 600;
         }
 
         .radio-group {
@@ -549,7 +658,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         }
 
         .radio-card.active {
-            background: rgba(168, 199, 250, 0.12);
+            background: rgba(56, 189, 248, 0.12);
             border-color: var(--md-sys-color-primary);
             color: var(--md-sys-color-primary);
             font-weight: 700;
@@ -580,20 +689,25 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 <body>
     <header>
         <div class="header-title">
-            <span style="font-size: 24px;">⚡</span>
+            <img src="/app_icon.png" alt="Icon">
             <h1>Freedom Config Collector</h1>
-            <span class="badge">v2.0 • Mihomo Core</span>
+            <span class="badge">v2.0 • Ultra-Light</span>
         </div>
         <div style="display: flex; gap: 10px;">
-            <button class="btn btn-outline" id="btn-save-all" onclick="saveAllSettings()">💾 ذخیره تغییرات</button>
+            <button class="btn btn-outline" id="btn-save-all" onclick="saveAllSettings()">💾 ذخیره تنظیمات</button>
         </div>
     </header>
 
     <div class="tabs">
-        <button class="tab-btn active" onclick="switchTab('tab-dashboard')">📊 داشبورد و کنترل عملیات</button>
-        <button class="tab-btn" onclick="switchTab('tab-sources')">🌐 مدیریت منابع (تلگرام، ساب، فایل)</button>
-        <button class="tab-btn" onclick="switchTab('tab-tests')">🧪 آزمون‌ها و فیلترها</button>
-        <button class="tab-btn" onclick="switchTab('tab-analytics')">📈 گزارش تحلیلی جامع</button>
+        <button class="tab-btn active" onclick="switchTab('tab-dashboard')">📊 داشبورد و اجرا</button>
+        <button class="tab-btn" onclick="switchTab('tab-sources')">🌐 مدیریت منابع</button>
+        <button class="tab-btn" onclick="switchTab('tab-network')">🛡️ تنظیمات اتصال و پروکسی</button>
+        <button class="tab-btn" onclick="switchTab('tab-tests')">🧪 شخصی‌سازی آزمون‌ها</button>
+        <button class="tab-btn" onclick="switchTab('tab-output-filters')">⚙️ فیلتر و سقف خروجی‌ها</button>
+        <button class="tab-btn" onclick="switchTab('tab-telegram-bot')">✈️ ارسال خودکار به تلگرام</button>
+        <button class="tab-btn" onclick="switchTab('tab-core')">⚡ مدیریت هسته میهومو</button>
+        <button class="tab-btn" onclick="switchTab('tab-loop')">🔄 زمان‌بندی چرخه (لوپ)</button>
+        <button class="tab-btn" onclick="switchTab('tab-analytics')">📈 گزارش تحلیلی پیشرفته</button>
     </div>
 
     <div class="container">
@@ -605,26 +719,26 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
                     <span id="runner-badge" class="badge">آماده به کار</span>
                 </div>
                 <div style="display: flex; gap: 12px; align-items: center; margin-bottom: 16px;">
-                    <button class="btn" id="btn-start" onclick="startCollector()">▶️ شروع جمع‌آوری و تست هوشمند</button>
+                    <button class="btn" id="btn-start" onclick="startCollector()">▶️ شروع جمع‌آوری و آزمون‌های هوشمند</button>
                     <span id="runner-status-text" style="font-size: 13px; color: var(--md-sys-color-on-surface-variant);">آماده برای شروع فرآیند...</span>
                 </div>
                 <div class="progress-bar-container">
                     <div id="progress-bar" class="progress-bar-fill"></div>
                 </div>
                 <div style="display: flex; justify-content: space-between; font-size: 11px; color: var(--md-sys-color-on-surface-variant);">
-                    <span>پیشرفت کلی</span>
+                    <span>پیشرفت عملیات</span>
                     <span id="progress-percent">0%</span>
                 </div>
             </div>
 
             <div class="grid-3" style="margin-bottom: 20px;">
                 <div class="stat-card">
-                    <span class="label">📦 کانفیگ‌های کشف‌شده</span>
+                    <span class="label">📦 کل کانفیگ‌های کشف‌شده</span>
                     <span class="val" id="stat-discovered">۶۵,۹۹۵</span>
                 </div>
                 <div class="stat-card">
-                    <span class="label">🧹 منقضی و تکراری حذف‌شده</span>
-                    <span class="val" id="stat-filtered" style="color: var(--md-sys-color-warning);">۵۰,۴۶۹</span>
+                    <span class="label">🧹 منقضی، تکراری و خراب فیلترشده</span>
+                    <span class="val" id="stat-filtered" style="color: var(--md-sys-color-warning);">۵۰,۵۰۲</span>
                 </div>
                 <div class="stat-card">
                     <span class="label">✅ کانفیگ‌های سالم و خروجی</span>
@@ -644,12 +758,16 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 
             <div class="card">
                 <div class="card-header">
-                    <h2>📥 دریافت فایل‌های خروجی</h2>
+                    <h2>📥 دریافت فایل‌های استاندارد خروجی (چند فرمتی)</h2>
                 </div>
                 <div style="display: flex; gap: 12px; flex-wrap: wrap;">
-                    <a href="/download/clash_provider.yaml" class="btn btn-outline" download>📥 دریافت سابسکریپشن کلش (clash_provider.yaml)</a>
-                    <a href="/download/clash_full.yaml" class="btn btn-outline" download>📥 دریافت کانفیگ کامل میهومو (clash_full.yaml)</a>
-                    <a href="/download/analytics_report.json" class="btn btn-outline" download>📊 دریافت فایل گزارش کامل (JSON)</a>
+                    <a href="/download/proxy_provider.yaml" class="btn btn-outline" download>⚡ پروکسی پرووایدر کلش (proxy_provider.yaml)</a>
+                    <a href="/download/clash_full.yaml" class="btn btn-outline" download>🐱 کانفیگ کامل میهومو (clash_full.yaml)</a>
+                    <a href="/download/singbox_outbounds.json" class="btn btn-outline" download>📦 خروجی سینگ‌باکس (singbox_outbounds.json)</a>
+                    <a href="/download/singbox_full.json" class="btn btn-outline" download>📦 کانفیگ کامل سینگ‌باکس (singbox_full.json)</a>
+                    <a href="/download/raw_links.txt" class="btn btn-outline" download>🔗 لینک‌های خام (raw_links.txt)</a>
+                    <a href="/download/sub_base64.txt" class="btn btn-outline" download>📋 سابسکریپشن Base64 (sub_base64.txt)</a>
+                    <a href="/download/analytics_report.json" class="btn btn-outline" download>📊 گزارش آماری کامل (analytics_report.json)</a>
                 </div>
             </div>
         </div>
@@ -658,11 +776,8 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         <div id="tab-sources" class="tab-content">
             <div class="card">
                 <div class="card-header">
-                    <h2>🎯 انتخاب منابع فعال برای استخراج</h2>
+                    <h2>🎯 حالت انتخاب منابع برای استخراج</h2>
                 </div>
-                <p style="font-size: 13px; color: var(--md-sys-color-on-surface-variant); margin-bottom: 14px;">
-                    مشخص کنید نرم‌افزار کانفیگ‌ها را از چه منابعی جمع‌آوری کند:
-                </p>
                 <div class="radio-group" id="mode-group">
                     <div class="radio-card active" data-mode="all" onclick="setSourceMode('all')">
                         <span>🌟 همه منابع با هم (پیش‌فرض)</span>
@@ -671,7 +786,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
                         <span>📂 فقط پوشه فایل‌های محلی</span>
                     </div>
                     <div class="radio-card" data-mode="subscriptions" onclick="setSourceMode('subscriptions')">
-                        <span>🌐 فقط لینک‌های اشتراک</span>
+                        <span>🌐 فقط لینک‌های سابسکریپشن</span>
                     </div>
                     <div class="radio-card" data-mode="telegram" onclick="setSourceMode('telegram')">
                         <span>✈️ فقط کانال‌های تلگرام</span>
@@ -687,33 +802,15 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
                     <label>مسیر پوشه در سیستم شما:</label>
                     <input type="text" id="src-folder-path" class="input-text" style="direction: ltr;" value="G:\Ai project\10Dream\decryptor\file for test">
                 </div>
-                <div class="form-group">
-                    <label>پسوندهای مجاز برای جستجو و رمزگشایی:</label>
-                    <div class="chip-container" id="ext-chips">
-                        <span class="chip active">.ovpn</span>
-                        <span class="chip active">.ehi</span>
-                        <span class="chip active">.npvt</span>
-                        <span class="chip active">.npvs</span>
-                        <span class="chip active">.hat</span>
-                        <span class="chip active">.nm</span>
-                        <span class="chip active">.dark</span>
-                        <span class="chip active">.slip</span>
-                        <span class="chip active">.ssc</span>
-                        <span class="chip active">.hc</span>
-                        <span class="chip active">.yaml</span>
-                        <span class="chip active">.txt</span>
-                        <span class="chip active">.conf</span>
-                    </div>
-                </div>
             </div>
 
             <div class="card">
                 <div class="card-header">
-                    <h2>🌐 لینک‌های اشتراک (Subscription URLs)</h2>
+                    <h2>🌐 لینک‌های سابسکریپشن (Subscription URLs)</h2>
                 </div>
                 <div class="form-group">
-                    <label>آدرس لینک‌ها (هر خط یک آدرس اشتراک):</label>
-                    <textarea id="src-subs-urls" class="textarea-text" rows="6"></textarea>
+                    <label>آدرس لینک‌ها (هر خط یک آدرس):</label>
+                    <textarea id="src-subs-urls" class="textarea-text" rows="5"></textarea>
                 </div>
             </div>
 
@@ -722,49 +819,114 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
                     <h2>✈️ کانال‌های تلگرام عمومی</h2>
                 </div>
                 <div class="form-group">
-                    <label>آیدی کانال‌ها (هر خط یک آیدی با علامت @):</label>
-                    <textarea id="src-tg-channels" class="textarea-text" rows="6"></textarea>
+                    <label>آیدی کانال‌ها (هر خط یک آیدی با @):</label>
+                    <textarea id="src-tg-channels" class="textarea-text" rows="5"></textarea>
                 </div>
                 <div class="grid-2">
                     <div class="form-group">
                         <label>حداکثر پیام‌ها برای بررسی در هر کانال:</label>
-                        <input type="number" id="src-tg-max-msg" class="input-text" value="15">
+                        <input type="text" id="src-tg-max-msg" class="input-text" value="15">
                     </div>
                     <div class="form-group">
                         <label>تاخیر بین درخواست‌ها (میلی‌ثانیه):</label>
-                        <input type="number" id="src-tg-delay" class="input-text" value="300">
+                        <input type="text" id="src-tg-delay" class="input-text" value="300">
                     </div>
                 </div>
             </div>
         </div>
 
-        <!-- TAB 3: TESTS -->
+        <!-- TAB 3: NETWORK -->
+        <div id="tab-network" class="tab-content">
+            <div class="card">
+                <div class="card-header">
+                    <h2>🛡️ تنظیمات اتصال به اینترنت و پروکسی استخراج</h2>
+                </div>
+                <p style="font-size: 13px; color: var(--md-sys-color-on-surface-variant); margin-bottom: 16px;">
+                    روشی که نرم‌افزار برای دانلود از کانال‌های تلگرام، سابسکریپشن‌ها و دریافت هسته میهومو استفاده می‌کند:
+                </p>
+                <div class="radio-group" id="net-mode-group">
+                    <div class="radio-card active" data-net="system_proxy" onclick="setNetMode('system_proxy')">
+                        <span>🛡️ سیستم پروکسی (System Proxy - پیش‌فرض ویندوز)</span>
+                    </div>
+                    <div class="radio-card" data-net="direct" onclick="setNetMode('direct')">
+                        <span>⚡ دایرکت (Direct - مستقیم بدون پروکسی)</span>
+                    </div>
+                    <div class="radio-card" data-net="http_proxy" onclick="setNetMode('http_proxy')">
+                        <span>🌐 پروکسی دستی HTTP</span>
+                    </div>
+                    <div class="radio-card" data-net="socks5_proxy" onclick="setNetMode('socks5_proxy')">
+                        <span>🧦 پروکسی دستی SOCKS5</span>
+                    </div>
+                </div>
+
+                <div id="custom-proxy-fields" class="grid-2" style="display: none; margin-top: 16px;">
+                    <div class="form-group">
+                        <label>آدرس آی‌پی یا هاست پروکسی:</label>
+                        <input type="text" id="net-proxy-host" class="input-text" style="direction: ltr;" value="127.0.0.1">
+                    </div>
+                    <div class="form-group">
+                        <label>پورت پروکسی:</label>
+                        <input type="text" id="net-proxy-port" class="input-text" style="direction: ltr;" value="7890">
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- TAB 4: TESTS -->
         <div id="tab-tests" class="tab-content">
             <div class="card">
                 <div class="card-header">
-                    <h2>🧪 گزینه‌ها و تنظیمات سنجش سلامت کانفیگ‌ها</h2>
+                    <h2>🧪 پروفایل‌های سریع و آماده آزمون‌ها</h2>
                 </div>
-                <p style="font-size: 13px; color: var(--md-sys-color-on-surface-variant); margin-bottom: 16px;">
-                    تمامی تست‌ها قابلیت فعال یا غیرفعال‌سازی دارند. تست‌های پیش‌فرض بر اساس بهینه‌ترین حالت سرعت و دقت تنظیم شده‌اند.
-                </p>
+                <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                    <button class="btn-preset active" onclick="applyPreset('balanced')">⚖️ متعادل (پیش‌فرض سریع و دقیق)</button>
+                    <button class="btn-preset" onclick="applyPreset('ultra_fast')">⚡ فوق سریع (فقط پینگ و کشور)</button>
+                    <button class="btn-preset" onclick="applyPreset('rigorous')">🛡️ سخت‌گیرانه و حرفه‌ای (تمام تست‌ها)</button>
+                </div>
+            </div>
 
-                <!-- 1. Ping -->
+            <div class="card">
+                <div class="card-header">
+                    <h2>⚙️ تنظیمات تفکیکی و پارامترهای هر آزمون</h2>
+                </div>
+
+                <!-- 1. Real Delay / Ping -->
                 <div class="switch-row">
                     <div class="switch-info">
-                        <span class="title">سنجش پینگ و زمان پاسخ (Ping Test)</span>
-                        <span class="desc">بررسی برقراری ارتباط سریع و محاسبه تاخیر اتصال به سرور پروکسی</span>
+                        <span class="title">سنجش تاخیر واقعی اتصال (Real Delay / URL Test)</span>
+                        <span class="desc">بررسی پاسخ‌دهی و زمان تاخیر اتصال به سرور</span>
                     </div>
                     <label class="switch">
                         <input type="checkbox" id="test-ping" checked>
                         <span class="slider"></span>
                     </label>
                 </div>
+                <div class="grid-3" style="margin-bottom: 20px;">
+                    <div class="form-group">
+                        <label>آدرس URL آزمون پینگ:</label>
+                        <input type="text" id="test-ping-url" class="input-text" style="direction: ltr;" value="http://www.gstatic.com/generate_204">
+                    </div>
+                    <div class="form-group">
+                        <label>مهلت انتظار پاسخ (Timeout):</label>
+                        <div class="unit-group">
+                            <input type="text" id="test-ping-timeout-val" class="input-text" value="3">
+                            <select id="test-ping-timeout-unit" class="select-box">
+                                <option value="s" selected>ثانیه</option>
+                                <option value="ms">میلی‌ثانیه</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>تعداد همزمانی (Concurrency):</label>
+                        <input type="text" id="test-ping-concurrency" class="input-text" value="30">
+                    </div>
+                </div>
 
                 <!-- 2. Geo & Flag -->
                 <div class="switch-row">
                     <div class="switch-info">
-                        <span class="title">تشخیص کشور و پرچم (Geo & Flag Emoji)</span>
-                        <span class="desc">شناسایی موقعیت جغرافیایی سرور و چسباندن پرچم اموجی کشور به اول نام کانفیگ</span>
+                        <span class="title">تشخیص کشور و پرچم اموجی (Geo & Flag)</span>
+                        <span class="desc">استعلام موقعیت واقعی سرور و الصاق پرچم کشور به ابتدای نام</span>
                     </div>
                     <label class="switch">
                         <input type="checkbox" id="test-geo" checked>
@@ -775,64 +937,93 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
                 <!-- 3. Gemini AI -->
                 <div class="switch-row">
                     <div class="switch-info">
-                        <span class="title">تست هوش مصنوعی جمنای گوگل (Google Gemini)</span>
-                        <span class="desc">سنجش باز شدن و تحریم نبودن سرویس هوش مصنوعی Gemini گوگل</span>
+                        <span class="title">تست هوش مصنوعی جمنای گوگل (Google Gemini AI Probe)</span>
+                        <span class="desc">سنجش باز شدن و تحریم نبودن سرویس هوش مصنوعی Gemini گوگل با ۳ سطح آزمون</span>
                     </div>
                     <label class="switch">
                         <input type="checkbox" id="test-gemini">
                         <span class="slider"></span>
                     </label>
                 </div>
+                <div id="gemini-extra-options" style="background: rgba(255,255,255,0.03); border: 1px solid var(--md-sys-color-outline-variant); border-radius: 12px; padding: 16px; margin-bottom: 20px;">
+                    <div class="grid-3" style="margin-bottom: 12px;">
+                        <div class="form-group">
+                            <label>سطح آزمون جمنای (Level):</label>
+                            <select id="gemini-level-select" class="select-box">
+                                <option value="1">سطح ۱: فقط سنجش اتصال سرور گوگل</option>
+                                <option value="2" selected>سطح ۲: وب‌اپ و تحریم منطقه جغرافیایی (پیش‌فرض)</option>
+                                <option value="3">سطح ۳: تست تولید واقعی با کلید API اختصاصی</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>کلید API اختصاصی (برای سطح ۳):</label>
+                            <input type="password" id="gemini-api-key" class="input-text" placeholder="AIzaSy..." style="direction: ltr;">
+                        </div>
+                        <div class="form-group">
+                            <label>کوکی‌های حساب کاربری (اختیاری):</label>
+                            <input type="text" id="gemini-cookies" class="input-text" placeholder="SID=...; HSID=..." style="direction: ltr;">
+                        </div>
+                    </div>
+                    <div style="display: flex; gap: 12px; align-items: center;">
+                        <button type="button" class="btn btn-outline" style="padding: 6px 16px; font-size: 12px;" onclick="testGeminiConnection()">🔍 تست زنده اتصال جمنای</button>
+                        <span id="gemini-test-result" style="font-size: 12px; color: var(--md-sys-color-on-surface-variant);"></span>
+                    </div>
+                </div>
 
-                <!-- 4. Unified Website Test -->
+                <!-- 4. Website Accessibility -->
                 <div class="switch-row">
                     <div class="switch-info">
-                        <span class="title">تست دسترسی به وب‌سایت‌های دلخواه (Unified Website Accessibility)</span>
-                        <span class="desc">بررسی دسترسی و باز شدن بدون فیلتر سایت‌های مهم کاربر (یوتیوب، تلگرام، جمنای و هر سایت دیگر)</span>
+                        <span class="title">تست دسترسی به سایت‌های دلخواه (Website Accessibility)</span>
+                        <span class="desc">بررسی دسترسی و باز شدن سایت‌های مدنظر کاربر (بدون تداخل با جمنای)</span>
                     </div>
                     <label class="switch">
                         <input type="checkbox" id="test-sites">
                         <span class="slider"></span>
                     </label>
                 </div>
-
-                <div class="form-group" style="margin-top: 10px; margin-bottom: 20px;">
+                <div class="form-group" style="margin-bottom: 20px;">
                     <label>آدرس سایت‌های مدنظر برای تست دسترسی (هر خط یک آدرس):</label>
-                    <textarea id="test-sites-list" class="textarea-text" rows="4">https://www.youtube.com/generate_204
+                    <textarea id="test-sites-list" class="textarea-text" rows="3">https://www.youtube.com/generate_204
 https://telegram.org
-https://gemini.google.com
 https://x.com</textarea>
                 </div>
 
                 <!-- 5. Download Speed -->
                 <div class="switch-row">
                     <div class="switch-info">
-                        <span class="title">سنجش سرعت دانلود (Download Speed)</span>
-                        <span class="desc">دریافت بسته داده ۵ مگابایتی از CDN کلودفلر برای محاسبه پهنای باند واقعی</span>
+                        <span class="title">سنجش سرعت دانلود واقعی (Download Speed)</span>
+                        <span class="desc">دریافت بسته داده تستی و محاسبه پهنای باند دانلود</span>
                     </div>
                     <label class="switch">
                         <input type="checkbox" id="test-download">
                         <span class="slider"></span>
                     </label>
                 </div>
-
-                <!-- 6. Upload Speed -->
-                <div class="switch-row">
-                    <div class="switch-info">
-                        <span class="title">سنجش سرعت آپلود (Upload Speed)</span>
-                        <span class="desc">ارسال بسته تستی ۱ مگابایتی برای سنجش پایداری خط آپلود</span>
+                <div class="grid-3" style="margin-bottom: 20px;">
+                    <div class="form-group">
+                        <label>آدرس فایل دانلود آزمایشی:</label>
+                        <input type="text" id="test-down-url" class="input-text" style="direction: ltr;" value="https://speed.cloudflare.com/__down?bytes=5000000">
                     </div>
-                    <label class="switch">
-                        <input type="checkbox" id="test-upload">
-                        <span class="slider"></span>
-                    </label>
+                    <div class="form-group">
+                        <label>مدت زمان تست:</label>
+                        <div class="unit-group">
+                            <input type="text" id="test-down-duration-val" class="input-text" value="5">
+                            <select id="test-down-duration-unit" class="select-box">
+                                <option value="s" selected>ثانیه</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>تعداد همزمانی دانلود:</label>
+                        <input type="text" id="test-down-concurrency" class="input-text" value="5">
+                    </div>
                 </div>
 
-                <!-- 7. UDP Support -->
+                <!-- 6. UDP -->
                 <div class="switch-row">
                     <div class="switch-info">
-                        <span class="title">بررسی پروتکل UDP (گیمینگ، تماس صوتی و تصویری)</span>
-                        <span class="desc">تست ارسال بسته‌های دیتای UDP لازم برای دیسکورد، تماس‌های تلگرام و بازی آنلاین</span>
+                        <span class="title">بررسی پروتکل UDP (گیمینگ، تماس صوتی تلگرام و دیسکورد)</span>
+                        <span class="desc">اطمینان از عبور بسته‌های UDP از روی کانفیگ</span>
                     </div>
                     <label class="switch">
                         <input type="checkbox" id="test-udp" checked>
@@ -840,11 +1031,11 @@ https://x.com</textarea>
                     </label>
                 </div>
 
-                <!-- 8. Stability & Jitter -->
+                <!-- 7. Stability -->
                 <div class="switch-row">
                     <div class="switch-info">
                         <span class="title">سنجش پایداری و نوسان پینگ (Stability & Jitter)</span>
-                        <span class="desc">انجام چند تست متوالی جهت اطمینان از عدم پرش پینگ و افت اتصال</span>
+                        <span class="desc">چند بار آزمایش پیاپی برای اطمینان از عدم پرش و قطعی لحظه‌ای</span>
                     </div>
                     <label class="switch">
                         <input type="checkbox" id="test-stability" checked>
@@ -852,11 +1043,11 @@ https://x.com</textarea>
                     </label>
                 </div>
 
-                <!-- 9. Clean IP / Fraud Score -->
+                <!-- 8. Clean IP -->
                 <div class="switch-row">
                     <div class="switch-info">
                         <span class="title">نمره تمیزی آی‌پی (Fraud Score & Clean IP)</span>
-                        <span class="desc">بررسی عدم اسپم بودن آی‌پی برای جلوگیری از کپچا و خطاهای Cloudflare</span>
+                        <span class="desc">بررسی عدم اسپم بودن آی‌پی جهت جلوگیری از خطاهای کپچا</span>
                     </div>
                     <label class="switch">
                         <input type="checkbox" id="test-fraud" checked>
@@ -867,19 +1058,41 @@ https://x.com</textarea>
 
             <div class="card">
                 <div class="card-header">
-                    <h2>🧹 فیلترها و پاکسازی هوشمند</h2>
+                    <h2>🔄 تست چند مرحله‌ای با وقفه (جلوگیری از حذف اشتباهی کانفیگ‌های سالم)</h2>
+                </div>
+                <p style="font-size: 13px; color: var(--md-sys-color-on-surface-variant); margin-bottom: 16px;">
+                    کل لیست پروکسی‌ها در چندین دور مجزا با وقفه زمانی سنجیده می‌شود تا در صورت افت لحظه‌ای کیفیت شبکه، کانفیگ‌های سالم به اشتباه حذف نشوند.
+                </p>
+                <div class="grid-3">
+                    <div class="form-group">
+                        <label>تعداد دورهای آزمون (Rounds):</label>
+                        <input type="text" id="rounds-count" class="input-text" value="1">
+                    </div>
+                    <div class="form-group">
+                        <label>وقفه استراحت بین دورها (ثانیه):</label>
+                        <input type="text" id="rounds-interval" class="input-text" value="15">
+                    </div>
+                    <div class="form-group">
+                        <label>حداقل تعداد دور قبولی برای بقا:</label>
+                        <input type="text" id="rounds-min-passed" class="input-text" value="1">
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <h2>🧹 تنظیمات فیلترها و پاکسازی</h2>
                 </div>
                 <div class="switch-row">
                     <div class="switch-info">
                         <span class="title">فیلتر و حذف خودکار کانفیگ‌های منقضی‌شده</span>
-                        <span class="desc">بررسی تاریخ انقضای فایل‌ها و حذف کانفیگ‌هایی که زمان اعتبارشان به پایان رسیده</span>
+                        <span class="desc">بررسی تاریخ انقضای فایل‌ها و حذف کانفیگ‌های تمام‌شده</span>
                     </div>
                     <label class="switch">
                         <input type="checkbox" id="filter-expired" checked>
                         <span class="slider"></span>
                     </label>
                 </div>
-
                 <div class="switch-row">
                     <div class="switch-info">
                         <span class="title">حذف کانفیگ‌های تکراری (Deduplication)</span>
@@ -890,11 +1103,10 @@ https://x.com</textarea>
                         <span class="slider"></span>
                     </label>
                 </div>
-
                 <div class="switch-row">
                     <div class="switch-info">
                         <span class="title">حذف کانفیگ‌های ناقص و خراب</span>
-                        <span class="desc">فیلتر کانفیگ‌هایی با پورت نامعتبر یا UUID ناقص</span>
+                        <span class="desc">فیلتر کانفیگ‌هایی با مشخصات مخدوش یا بدون پورت معتبر</span>
                     </div>
                     <label class="switch">
                         <input type="checkbox" id="filter-broken" checked>
@@ -904,54 +1116,367 @@ https://x.com</textarea>
             </div>
         </div>
 
-        <!-- TAB 4: ANALYTICS -->
+        <!-- TAB: OUTPUT FILTERS & CAPS -->
+        <div id="tab-output-filters" class="tab-content">
+            <div class="card">
+                <div class="card-header">
+                    <h2>🎯 فیلترها و شرایط ورود به فایل خروجی</h2>
+                </div>
+                <div class="grid-2" style="margin-bottom: 20px;">
+                    <div class="form-group">
+                        <label>حداقل امتیاز کیفی نهایی (Score):</label>
+                        <input type="text" id="out-min-score" class="input-text" value="0.0">
+                        <small style="color: var(--md-sys-color-on-surface-variant); font-size: 11px;">عدد بین ۰ تا ۱۰۰ (پیش‌فرض ۰ برای خروجی همه کانفیگ‌های سالم)</small>
+                    </div>
+                    <div class="switch-row" style="margin-top: 15px; border-bottom: none;">
+                        <div class="switch-info">
+                            <span class="title">فقط کانفیگ‌های موفق در هوش مصنوعی جمنای</span>
+                            <span class="desc">تنها کانفیگ‌هایی صادر شوند که آزمون Gemini گوگل را پشت سر گذاشته‌اند</span>
+                        </div>
+                        <label class="switch">
+                            <input type="checkbox" id="out-only-gemini">
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <h2>📊 سقف تعداد کانفیگ برای هر پروتکل (Per-Protocol Limits)</h2>
+                </div>
+                <p style="font-size: 13px; color: var(--md-sys-color-on-surface-variant); margin-bottom: 16px;">
+                    حداکثر تعداد کانفیگی که از هر پروتکل در فایل نهایی قرار می‌گیرد (عدد ۰ به معنی بدون سقف و نامحدود است):
+                </p>
+                <div class="grid-4" style="margin-bottom: 16px;">
+                    <div class="form-group">
+                        <label>سقف VLESS:</label>
+                        <input type="text" id="cap-vless" class="input-text" value="0">
+                    </div>
+                    <div class="form-group">
+                        <label>سقف VMess:</label>
+                        <input type="text" id="cap-vmess" class="input-text" value="0">
+                    </div>
+                    <div class="form-group">
+                        <label>سقف Trojan:</label>
+                        <input type="text" id="cap-trojan" class="input-text" value="0">
+                    </div>
+                    <div class="form-group">
+                        <label>سقف Shadowsocks:</label>
+                        <input type="text" id="cap-ss" class="input-text" value="0">
+                    </div>
+                </div>
+                <div class="grid-4">
+                    <div class="form-group">
+                        <label>سقف Hysteria 2:</label>
+                        <input type="text" id="cap-hy2" class="input-text" value="0">
+                    </div>
+                    <div class="form-group">
+                        <label>سقف TUIC:</label>
+                        <input type="text" id="cap-tuic" class="input-text" value="0">
+                    </div>
+                    <div class="form-group">
+                        <label>سقف OpenVPN:</label>
+                        <input type="text" id="cap-openvpn" class="input-text" value="0">
+                    </div>
+                    <div class="form-group">
+                        <label>سقف WireGuard:</label>
+                        <input type="text" id="cap-wireguard" class="input-text" value="0">
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <h2>🧠 حافظه عدم تکرار کانفیگ‌ها (Sent History Memory)</h2>
+                </div>
+                <div class="switch-row" style="border-bottom: none;">
+                    <div class="switch-info">
+                        <span class="title">فعال‌سازی حافظه عدم تکرار</span>
+                        <span class="desc">کانفیگ‌هایی که در دوره‌های قبلی صادر یا به کانال فرستاده شده‌اند مجدداً صادر نمی‌شوند</span>
+                    </div>
+                    <label class="switch">
+                        <input type="checkbox" id="out-filter-sent">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                <div style="display: flex; gap: 12px; align-items: center; margin-top: 16px;">
+                    <button type="button" class="btn btn-outline" style="padding: 6px 16px; font-size: 12px; color: var(--md-sys-color-warning);" onclick="clearSentHistory()">🗑️ پاکسازی کامل تاریخچه کانفیگ‌های قبلی</button>
+                    <span id="history-clear-status" style="font-size: 12px; color: var(--md-sys-color-on-surface-variant);"></span>
+                </div>
+            </div>
+        </div>
+
+        <!-- TAB: TELEGRAM BOT AUTO-SENDER -->
+        <div id="tab-telegram-bot" class="tab-content">
+            <div class="card">
+                <div class="card-header">
+                    <h2>✈️ ارسال خودکار به کانال یا چت تلگرام</h2>
+                </div>
+                <div class="switch-row">
+                    <div class="switch-info">
+                        <span class="title">فعال‌سازی ارسال خودکار پس از پایان تست‌ها</span>
+                        <span class="desc">با پایان یافتن آزمون‌ها، فایل‌های خروجی و گزارش تحلیلی مستقیماً به کانال تلگرام ارسال می‌شوند</span>
+                    </div>
+                    <label class="switch">
+                        <input type="checkbox" id="tg-enabled">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+
+                <div class="grid-2" style="margin-bottom: 20px;">
+                    <div class="form-group">
+                        <label>توکن ربات تلگرام (Bot Token):</label>
+                        <input type="password" id="tg-bot-token" class="input-text" placeholder="123456789:ABCdefGhIJKlmNoPQRstuVWXyz" style="direction: ltr;">
+                    </div>
+                    <div class="form-group">
+                        <label>شناسه کانال یا چت مقصد (Channel ID / Username):</label>
+                        <input type="text" id="tg-channel-id" class="input-text" placeholder="@MyChannel یا -100123456789" style="direction: ltr;">
+                    </div>
+                </div>
+
+                <div class="form-group" style="margin-bottom: 20px;">
+                    <label>متن کپشن ارسالی برای فایل‌ها:</label>
+                    <input type="text" id="tg-caption" class="input-text" value="💎 گلچین کانفیگ‌های تست‌شده Freedom Config Collector v2">
+                </div>
+
+                <div class="grid-2" style="margin-bottom: 20px;">
+                    <div class="switch-row" style="border-bottom: none;">
+                        <div class="switch-info">
+                            <span class="title">ارسال فایل‌های اشتراک (Clash, Singbox, Xray)</span>
+                        </div>
+                        <label class="switch">
+                            <input type="checkbox" id="tg-send-files" checked>
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                    <div class="switch-row" style="border-bottom: none;">
+                        <div class="switch-info">
+                            <span class="title">ارسال گزارش متنی و آمار در کانال</span>
+                        </div>
+                        <label class="switch">
+                            <input type="checkbox" id="tg-send-summary" checked>
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                </div>
+
+                <div style="display: flex; gap: 12px; align-items: center;">
+                    <button type="button" class="btn btn-outline" style="padding: 6px 16px; font-size: 12px;" onclick="testTelegramConnection()">🔍 تست اتصال ربات تلگرام</button>
+                    <span id="tg-test-result" style="font-size: 12px; color: var(--md-sys-color-on-surface-variant);"></span>
+                </div>
+            </div>
+        </div>
+
+        <!-- TAB 5: CORE MANAGER -->
+        <div id="tab-core" class="tab-content">
+            <div class="card">
+                <div class="card-header">
+                    <h2>⚡ وضعیت و مدیریت هسته رسمی میهومو (Mihomo Core)</h2>
+                </div>
+                <div class="grid-3" style="margin-bottom: 20px;">
+                    <div class="stat-card">
+                        <span class="label">وضعیت نصب هسته</span>
+                        <span class="val" id="core-installed-status" style="font-size: 16px;">در حال بررسی...</span>
+                    </div>
+                    <div class="stat-card">
+                        <span class="label">معماری پردازنده شناسایی‌شده</span>
+                        <span class="val" id="core-detected-arch" style="font-size: 16px;">windows-amd64-compatible</span>
+                    </div>
+                    <div class="stat-card">
+                        <span class="label">کانال ریلیز میهومو</span>
+                        <span class="val" id="core-release-channel" style="font-size: 16px;">پایدار (Stable)</span>
+                    </div>
+                </div>
+
+                <div class="grid-2" style="margin-bottom: 20px;">
+                    <div class="form-group">
+                        <label>معماری پردازنده جهت دانلود:</label>
+                        <select id="core-arch-pref" class="select-box">
+                            <option value="auto" selected>تشخیص خودکار و هوشمند (پیشنهادی)</option>
+                            <option value="windows-amd64-compatible">نسخه عمومی و سازگار با سیستم‌های قدیمی (amd64-compatible)</option>
+                            <option value="windows-amd64">نسخه مدرن با دستورات AVX2 (amd64)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>کانال دریافت بروزرسانی:</label>
+                        <select id="core-channel-select" class="select-box">
+                            <option value="stable" selected>نسخه پایدار و رسمی (Stable)</option>
+                            <option value="alpha">نسخه روزانه و آزمایشی (Alpha)</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div style="display: flex; gap: 12px; align-items: center;">
+                    <button class="btn" id="btn-download-core" onclick="downloadMihomoCore()">📥 دانلود / به‌روزرسانی خودکار هسته میهومو</button>
+                    <span id="core-download-text" style="font-size: 13px; color: var(--md-sys-color-on-surface-variant);"></span>
+                </div>
+            </div>
+        </div>
+
+        <!-- TAB 6: LOOP SCHEDULER -->
+        <div id="tab-loop" class="tab-content">
+            <div class="card">
+                <div class="card-header">
+                    <h2>🔄 زمان‌بندی چرخه تکرار خودکار (Loop Scheduler)</h2>
+                </div>
+                <div class="switch-row">
+                    <div class="switch-info">
+                        <span class="title">فعال‌سازی اجرای چرخه‌ای خودکار</span>
+                        <span class="desc">برنامه به صورت مداوم در پس‌زمینه اجرا شده و کانفیگ‌های تازه را استخراج و تست می‌کند</span>
+                    </div>
+                    <label class="switch">
+                        <input type="checkbox" id="sched-enabled">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+
+                <div class="grid-2" style="margin-top: 16px;">
+                    <div class="form-group">
+                        <label>فاصله زمانی تکرار چرخه:</label>
+                        <div class="unit-group">
+                            <input type="text" id="sched-interval-val" class="input-text" value="60">
+                            <select id="sched-interval-unit" class="select-box">
+                                <option value="min" selected>دقیقه</option>
+                                <option value="h">ساعت</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="switch-row" style="margin-top: 10px;">
+                    <div class="switch-info">
+                        <span class="title">ساعات سکوت شبانه (Quiet Hours)</span>
+                        <span class="desc">توقف خودکار پردازش در ساعاتی از شب جهت آسایش کاربر</span>
+                    </div>
+                    <label class="switch">
+                        <input type="checkbox" id="sched-quiet-enabled">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+
+                <div class="grid-2" style="margin-top: 10px;">
+                    <div class="form-group">
+                        <label>شروع ساعت سکوت (مثلاً 02:00):</label>
+                        <input type="text" id="sched-quiet-start" class="input-text" value="02:00">
+                    </div>
+                    <div class="form-group">
+                        <label>پایان ساعت سکوت (مثلاً 07:00):</label>
+                        <input type="text" id="sched-quiet-end" class="input-text" value="07:00">
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- TAB 7: ANALYTICS -->
         <div id="tab-analytics" class="tab-content">
             <div class="card">
                 <div class="card-header">
-                    <h2>📈 آمار تفکیکی کانفیگ‌ها و پروتکل‌ها</h2>
+                    <h2>🔍 فیلتر مشاهده آمار اختصاصی یک منبع</h2>
                 </div>
-                <div class="grid-2">
-                    <div>
-                        <h3 style="font-size: 14px; margin-bottom: 12px; color: var(--md-sys-color-primary);">توزیع پروتکل‌ها:</h3>
-                        <table>
-                            <thead>
-                                <tr>
-                                    <th>پروتکل</th>
-                                    <th>تعداد</th>
-                                    <th>وضعیت هسته میهومو</th>
-                                </tr>
-                            </thead>
-                            <tbody id="protocol-table-body">
-                                <tr><td>VLESS Reality / Vision</td><td>۹,۸۴۰</td><td>پشتیبانی کامل ✅</td></tr>
-                                <tr><td>VMess</td><td>۳,۲۱۰</td><td>پشتیبانی کامل ✅</td></tr>
-                                <tr><td>Trojan</td><td>۱,۴۸۰</td><td>پشتیبانی کامل ✅</td></tr>
-                                <tr><td>OpenVPN</td><td>۴۵</td><td>پشتیبانی کامل ✅</td></tr>
-                                <tr><td>Hysteria 2 / TUIC</td><td>۳۵۰</td><td>پشتیبانی کامل ✅</td></tr>
-                                <tr><td>Shadowsocks</td><td>۵۶۸</td><td>پشتیبانی کامل ✅</td></tr>
-                            </tbody>
-                        </table>
+                <p style="font-size: 13px; color: var(--md-sys-color-on-surface-variant); margin-bottom: 12px;">
+                    می‌توانید آمار کل را مشاهده کنید یا یک منبع خاص (کانال یا لینک اشتراک) را انتخاب نمایید تا آمار تفکیکی آن بررسی شود:
+                </p>
+                <div class="form-group">
+                    <select id="analytics-source-filter" class="select-box" onchange="filterAnalyticsBySource()">
+                        <option value="all">🌟 همه منابع (گزارش سراسری)</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="grid-2">
+                <!-- Pure Protocols -->
+                <div class="card">
+                    <div class="card-header">
+                        <h2>🧬 کارت تفکیک خالص پروتکل‌ها</h2>
                     </div>
-                    <div>
-                        <h3 style="font-size: 14px; margin-bottom: 12px; color: var(--md-sys-color-primary);">خلاصه فیلترها و نتایج:</h3>
-                        <div class="stat-card" style="margin-bottom: 10px;">
-                            <span class="label">⏰ کانفیگ‌های منقضی شناسایی‌شده</span>
-                            <span class="val" id="stat-expired-count" style="color: var(--md-sys-color-error);">۵۹ کانفیگ</span>
-                        </div>
-                        <div class="stat-card" style="margin-bottom: 10px;">
-                            <span class="label">🔄 تکراری‌های حذف‌شده</span>
-                            <span class="val" id="stat-duplicates-count">۵۰,۴۱۰ کانفیگ</span>
-                        </div>
-                        <div class="stat-card">
-                            <span class="label">🎯 درصد سازگاری با Mihomo</span>
-                            <span class="val" style="color: var(--md-sys-color-success);">۱۰۰٪</span>
-                        </div>
+                    <table>
+                        <thead>
+                            <tr><th>پروتکل</th><th>تعداد شناسایی‌شده</th><th>سازگاری میهومو</th></tr>
+                        </thead>
+                        <tbody id="tbl-protocols">
+                            <tr><td>VLESS</td><td>۹,۸۴۰</td><td>پشتیبانی کامل ✅</td></tr>
+                            <tr><td>VMess</td><td>۳,۲۱۰</td><td>پشتیبانی کامل ✅</td></tr>
+                            <tr><td>Trojan</td><td>۱,۴۸۰</td><td>پشتیبانی کامل ✅</td></tr>
+                            <tr><td>Shadowsocks</td><td>۵۶۸</td><td>پشتیبانی کامل ✅</td></tr>
+                            <tr><td>Hysteria 2</td><td>۲۱۰</td><td>پشتیبانی کامل ✅</td></tr>
+                            <tr><td>TUIC</td><td>۱۴۰</td><td>پشتیبانی کامل ✅</td></tr>
+                            <tr><td>OpenVPN</td><td>۴۵</td><td>پشتیبانی کامل ✅</td></tr>
+                            <tr><td>WireGuard</td><td>۱۲</td><td>پشتیبانی کامل ✅</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Transports & Security -->
+                <div class="card">
+                    <div class="card-header">
+                        <h2>🌐 بستر انتقال و لایه امنیت (Transports & Security)</h2>
                     </div>
+                    <h3 style="font-size: 13px; color: var(--md-sys-color-primary); margin-bottom: 8px;">انواع بستر انتقال (Transports):</h3>
+                    <div class="grid-2" style="margin-bottom: 16px;">
+                        <div class="stat-card"><span class="label">WebSocket (WS)</span><span class="val" id="stat-trans-ws">۸,۴۲۰</span></div>
+                        <div class="stat-card"><span class="label">gRPC</span><span class="val" id="stat-trans-grpc">۲,۱۵۰</span></div>
+                        <div class="stat-card"><span class="label">TCP عادی</span><span class="val" id="stat-trans-tcp">۴,۲۹۰</span></div>
+                        <div class="stat-card"><span class="label">HTTP / xHTTP</span><span class="val" id="stat-trans-http">۶۳۳</span></div>
+                    </div>
+                    <h3 style="font-size: 13px; color: var(--md-sys-color-primary); margin-bottom: 8px;">امنیت و استتار (Security):</h3>
+                    <div class="grid-2">
+                        <div class="stat-card"><span class="label">Reality (ضد فیلتر قوی)</span><span class="val" id="stat-sec-reality">۴,۵۱۰</span></div>
+                        <div class="stat-card"><span class="label">TLS استاندارد</span><span class="val" id="stat-sec-tls">۶,۸۲۰</span></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="grid-2">
+                <!-- Containers Decrypted -->
+                <div class="card">
+                    <div class="card-header">
+                        <h2>📦 کانتینرهای رمزگشایی‌شده (Decrypted Containers)</h2>
+                    </div>
+                    <table>
+                        <thead><tr><th>فرمت فایل کانتینر</th><th>تعداد فایل استخراج‌شده</th></tr></thead>
+                        <tbody id="tbl-containers">
+                            <tr><td>HTTP Custom (.hc)</td><td>۱۸۴</td></tr>
+                            <tr><td>E-V2ray (.ehi)</td><td>۱۵۲</td></tr>
+                            <tr><td>NapsternetV (.npvt / .npvs)</td><td>۱۱۸</td></tr>
+                            <tr><td>HA Tunnel Plus (.hat)</td><td>۹۶</td></tr>
+                            <tr><td>NetMod Syna (.nm)</td><td>۶۴</td></tr>
+                            <tr><td>Dark Tunnel (.dark)</td><td>۳۸</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Top Sources Leaderboard -->
+                <div class="card">
+                    <div class="card-header">
+                        <h2>🏆 رتبه‌بندی برترین منابع (Leaderboard)</h2>
+                    </div>
+                    <table>
+                        <thead><tr><th>نام منبع</th><th>کل</th><th>سالم</th><th>درصد موفقیت</th><th>پینگ</th></tr></thead>
+                        <tbody id="tbl-top-sources">
+                            <tr><td>@AzadNet</td><td>۴۵۰</td><td>۳۸۰</td><td>۸۴.۴٪</td><td>۱۸۰ms</td></tr>
+                            <tr><td>@MatinSenPaii</td><td>۳۲۰</td><td>۲۶۰</td><td>۸۱.۲٪</td><td>۱۹۵ms</td></tr>
+                            <tr><td>test.yaml</td><td>۱,۲۰۰</td><td>۹۲۰</td><td>۷۶.۶٪</td><td>۲۱۰ms</td></tr>
+                        </tbody>
+                    </table>
                 </div>
             </div>
         </div>
     </div>
 
     <script>
+        let currentAnalyticsData = null;
+
+        function toPersianDigits(n) {
+            if (n === null || n === undefined) return '';
+            return n.toString().replace(/\d/g, d => '۰۱۲۳۴۵۶۷۸۹'[d]);
+        }
+
+        function toEnglishDigits(s) {
+            if (!s) return '';
+            return s.toString().replace(/[۰-۹]/g, d => '۰۱۲۳۴۵۶۷۸۹'.indexOf(d));
+        }
+
         function switchTab(tabId) {
             document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
             document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
@@ -965,8 +1490,54 @@ https://x.com</textarea>
             });
         }
 
+        function setNetMode(mode) {
+            document.querySelectorAll('#net-mode-group .radio-card').forEach(el => {
+                el.classList.toggle('active', el.getAttribute('data-net') === mode);
+            });
+            const customFields = document.getElementById('custom-proxy-fields');
+            if (mode === 'http_proxy' || mode === 'socks5_proxy') {
+                customFields.style.display = 'grid';
+            } else {
+                customFields.style.display = 'none';
+            }
+        }
+
         function clearLogs() {
             document.getElementById('terminal-box').innerHTML = '[System] لاگ پاکسازی شد.';
+        }
+
+        function applyPreset(preset) {
+            document.querySelectorAll('.btn-preset').forEach(b => b.classList.remove('active'));
+            event.currentTarget.classList.add('active');
+
+            if (preset === 'ultra_fast') {
+                document.getElementById('test-ping').checked = true;
+                document.getElementById('test-geo').checked = true;
+                document.getElementById('test-gemini').checked = false;
+                document.getElementById('test-sites').checked = false;
+                document.getElementById('test-download').checked = false;
+                document.getElementById('test-udp').checked = false;
+                document.getElementById('test-stability').checked = false;
+                document.getElementById('test-fraud').checked = false;
+            } else if (preset === 'balanced') {
+                document.getElementById('test-ping').checked = true;
+                document.getElementById('test-geo').checked = true;
+                document.getElementById('test-gemini').checked = false;
+                document.getElementById('test-sites').checked = false;
+                document.getElementById('test-download').checked = false;
+                document.getElementById('test-udp').checked = true;
+                document.getElementById('test-stability').checked = true;
+                document.getElementById('test-fraud').checked = true;
+            } else if (preset === 'rigorous') {
+                document.getElementById('test-ping').checked = true;
+                document.getElementById('test-geo').checked = true;
+                document.getElementById('test-gemini').checked = true;
+                document.getElementById('test-sites').checked = true;
+                document.getElementById('test-download').checked = true;
+                document.getElementById('test-udp').checked = true;
+                document.getElementById('test-stability').checked = true;
+                document.getElementById('test-fraud').checked = true;
+            }
         }
 
         async function loadInitialSettings() {
@@ -996,22 +1567,94 @@ https://x.com</textarea>
                     }
                 }
 
+                // Network
+                if (s.network) {
+                    setNetMode(s.network.mode || 'system_proxy');
+                    if (s.network.proxy_host) document.getElementById('net-proxy-host').value = s.network.proxy_host;
+                    if (s.network.proxy_port) document.getElementById('net-proxy-port').value = s.network.proxy_port;
+                }
+
+                // Core Manager
+                if (s.core_manager) {
+                    if (s.core_manager.preferred_arch) document.getElementById('core-arch-pref').value = s.core_manager.preferred_arch;
+                    if (s.core_manager.channel) document.getElementById('core-channel-select').value = s.core_manager.channel;
+                }
+
+                // Scheduler
+                if (s.scheduler) {
+                    document.getElementById('sched-enabled').checked = !!s.scheduler.enabled;
+                    if (s.scheduler.interval_val) document.getElementById('sched-interval-val').value = s.scheduler.interval_val;
+                    if (s.scheduler.interval_unit) document.getElementById('sched-interval-unit').value = s.scheduler.interval_unit;
+                    document.getElementById('sched-quiet-enabled').checked = !!s.scheduler.quiet_hours_enabled;
+                    if (s.scheduler.quiet_start) document.getElementById('sched-quiet-start').value = s.scheduler.quiet_start;
+                    if (s.scheduler.quiet_end) document.getElementById('sched-quiet-end').value = s.scheduler.quiet_end;
+                }
+
                 // Tests
                 if (s.tests) {
-                    if (s.tests.ping) document.getElementById('test-ping').checked = !!s.tests.ping.enabled;
+                    if (s.tests.ping) {
+                        document.getElementById('test-ping').checked = !!s.tests.ping.enabled;
+                        if (s.tests.ping.test_url) document.getElementById('test-ping-url').value = s.tests.ping.test_url;
+                        if (s.tests.ping.timeout_val) document.getElementById('test-ping-timeout-val').value = s.tests.ping.timeout_val;
+                        if (s.tests.ping.timeout_unit) document.getElementById('test-ping-timeout-unit').value = s.tests.ping.timeout_unit;
+                        if (s.tests.ping.concurrency) document.getElementById('test-ping-concurrency').value = s.tests.ping.concurrency;
+                    }
                     if (s.tests.geo_flag) document.getElementById('test-geo').checked = !!s.tests.geo_flag.enabled;
-                    if (s.tests.gemini) document.getElementById('test-gemini').checked = !!s.tests.gemini.enabled;
+                    if (s.tests.gemini) {
+                        document.getElementById('test-gemini').checked = !!s.tests.gemini.enabled;
+                        if (s.tests.gemini.level && document.getElementById('gemini-level-select')) document.getElementById('gemini-level-select').value = s.tests.gemini.level;
+                        if (s.tests.gemini.api_key && document.getElementById('gemini-api-key')) document.getElementById('gemini-api-key').value = s.tests.gemini.api_key;
+                        if (s.tests.gemini.cookies_str && document.getElementById('gemini-cookies')) document.getElementById('gemini-cookies').value = s.tests.gemini.cookies_str;
+                    }
                     if (s.tests.website_accessibility) {
                         document.getElementById('test-sites').checked = !!s.tests.website_accessibility.enabled;
                         if (s.tests.website_accessibility.sites) {
                             document.getElementById('test-sites-list').value = s.tests.website_accessibility.sites.join('\n');
                         }
                     }
-                    if (s.tests.download_speed) document.getElementById('test-download').checked = !!s.tests.download_speed.enabled;
-                    if (s.tests.upload_speed) document.getElementById('test-upload').checked = !!s.tests.upload_speed.enabled;
+                    if (s.tests.download_speed) {
+                        document.getElementById('test-download').checked = !!s.tests.download_speed.enabled;
+                        if (s.tests.download_speed.test_url) document.getElementById('test-down-url').value = s.tests.download_speed.test_url;
+                        if (s.tests.download_speed.duration_val) document.getElementById('test-down-duration-val').value = s.tests.download_speed.duration_val;
+                        if (s.tests.download_speed.duration_unit) document.getElementById('test-down-duration-unit').value = s.tests.download_speed.duration_unit;
+                        if (s.tests.download_speed.concurrency) document.getElementById('test-down-concurrency').value = s.tests.download_speed.concurrency;
+                    }
                     if (s.tests.udp) document.getElementById('test-udp').checked = !!s.tests.udp.enabled;
                     if (s.tests.stability) document.getElementById('test-stability').checked = !!s.tests.stability.enabled;
                     if (s.tests.fraud_score) document.getElementById('test-fraud').checked = !!s.tests.fraud_score.enabled;
+                }
+
+                // Testing rounds
+                if (s.testing_rounds) {
+                    if (s.testing_rounds.rounds_count && document.getElementById('rounds-count')) document.getElementById('rounds-count').value = s.testing_rounds.rounds_count;
+                    if (s.testing_rounds.interval_between_rounds_sec && document.getElementById('rounds-interval')) document.getElementById('rounds-interval').value = s.testing_rounds.interval_between_rounds_sec;
+                    if (s.testing_rounds.min_passed_rounds && document.getElementById('rounds-min-passed')) document.getElementById('rounds-min-passed').value = s.testing_rounds.min_passed_rounds;
+                }
+
+                // Output filters
+                if (s.output_filters) {
+                    if (s.output_filters.min_score !== undefined && document.getElementById('out-min-score')) document.getElementById('out-min-score').value = s.output_filters.min_score;
+                    if (document.getElementById('out-only-gemini')) document.getElementById('out-only-gemini').checked = !!s.output_filters.only_gemini_passed;
+                    if (document.getElementById('out-filter-sent')) document.getElementById('out-filter-sent').checked = !!s.output_filters.filter_previously_sent;
+                    const caps = s.output_filters.per_protocol_limits || {};
+                    if (document.getElementById('cap-vless')) document.getElementById('cap-vless').value = caps.vless || 0;
+                    if (document.getElementById('cap-vmess')) document.getElementById('cap-vmess').value = caps.vmess || 0;
+                    if (document.getElementById('cap-trojan')) document.getElementById('cap-trojan').value = caps.trojan || 0;
+                    if (document.getElementById('cap-ss')) document.getElementById('cap-ss').value = caps.shadowsocks || caps.ss || 0;
+                    if (document.getElementById('cap-hy2')) document.getElementById('cap-hy2').value = caps.hysteria2 || caps.hy2 || 0;
+                    if (document.getElementById('cap-tuic')) document.getElementById('cap-tuic').value = caps.tuic || 0;
+                    if (document.getElementById('cap-openvpn')) document.getElementById('cap-openvpn').value = caps.openvpn || 0;
+                    if (document.getElementById('cap-wireguard')) document.getElementById('cap-wireguard').value = caps.wireguard || 0;
+                }
+
+                // Telegram sender
+                if (s.telegram_sender) {
+                    if (document.getElementById('tg-enabled')) document.getElementById('tg-enabled').checked = !!s.telegram_sender.enabled;
+                    if (s.telegram_sender.bot_token && document.getElementById('tg-bot-token')) document.getElementById('tg-bot-token').value = s.telegram_sender.bot_token;
+                    if (s.telegram_sender.channel_id && document.getElementById('tg-channel-id')) document.getElementById('tg-channel-id').value = s.telegram_sender.channel_id;
+                    if (s.telegram_sender.caption && document.getElementById('tg-caption')) document.getElementById('tg-caption').value = s.telegram_sender.caption;
+                    if (document.getElementById('tg-send-files')) document.getElementById('tg-send-files').checked = (s.telegram_sender.send_files !== false);
+                    if (document.getElementById('tg-send-summary')) document.getElementById('tg-send-summary').checked = (s.telegram_sender.send_summary !== false);
                 }
 
                 // Filters
@@ -1020,46 +1663,156 @@ https://x.com</textarea>
                     document.getElementById('filter-duplicates').checked = !!s.filters.filter_duplicates;
                     document.getElementById('filter-broken').checked = !!s.filters.filter_broken;
                 }
+
+                checkCoreStatus();
+                loadAnalytics();
             } catch (e) {
                 console.error("Load settings failed:", e);
             }
         }
 
+        async function checkCoreStatus() {
+            try {
+                const res = await fetch('/api/core/status');
+                const data = await res.json();
+                const st = document.getElementById('core-installed-status');
+                if (data.installed) {
+                    st.innerText = data.version || 'نصب شده ✅';
+                    st.style.color = 'var(--md-sys-color-success)';
+                } else {
+                    st.innerText = 'نصب نشده ⚠️';
+                    st.style.color = 'var(--md-sys-color-warning)';
+                }
+                document.getElementById('core-detected-arch').innerText = data.detected_arch || 'windows-amd64-compatible';
+            } catch (e) {}
+        }
+
+        async function downloadMihomoCore() {
+            const btn = document.getElementById('btn-download-core');
+            const txt = document.getElementById('core-download-text');
+            btn.disabled = true;
+            txt.innerText = 'در حال ارتباط با سرور و استعلام نسخه...';
+            try {
+                const arch = document.getElementById('core-arch-pref').value;
+                const chan = document.getElementById('core-channel-select').value;
+                const res = await fetch('/api/core/download', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({arch: arch, channel: chan})
+                });
+                const d = await res.json();
+                txt.innerText = d.message || 'فرآیند دانلود آغاز شد...';
+            } catch (e) {
+                txt.innerText = 'خطا در ارسال دستور: ' + e;
+                btn.disabled = false;
+            }
+        }
+
         async function saveAllSettings() {
+            const btn = document.getElementById('btn-save-all');
+            btn.innerText = '⏳ در حال ذخیره...';
+
             const activeCard = document.querySelector('#mode-group .radio-card.active');
             const activeMode = activeCard ? activeCard.getAttribute('data-mode') : 'all';
+
+            const activeNetCard = document.querySelector('#net-mode-group .radio-card.active');
+            const activeNet = activeNetCard ? activeNetCard.getAttribute('data-net') : 'system_proxy';
 
             const payload = {
                 sources: {
                     active_mode: activeMode,
                     local_folder: {
                         enabled: true,
-                        path: document.getElementById('src-folder-path').value.trim()
+                        path: document.getElementById('src-folder-path').value
                     },
                     subscriptions: {
                         enabled: true,
-                        urls: document.getElementById('src-subs-urls').value.split('\n').map(x => x.trim()).filter(Boolean)
+                        urls: document.getElementById('src-subs-urls').value.split('\n').map(l => l.trim()).filter(l => l)
                     },
                     telegram: {
                         enabled: true,
-                        channels: document.getElementById('src-tg-channels').value.split('\n').map(x => x.trim()).filter(Boolean),
-                        max_messages_per_channel: parseInt(document.getElementById('src-tg-max-msg').value) || 15,
-                        delay_ms: parseInt(document.getElementById('src-tg-delay').value) || 300
+                        channels: document.getElementById('src-tg-channels').value.split('\n').map(l => l.trim()).filter(l => l),
+                        max_messages_per_channel: parseInt(toEnglishDigits(document.getElementById('src-tg-max-msg').value)) || 15,
+                        delay_ms: parseInt(toEnglishDigits(document.getElementById('src-tg-delay').value)) || 300
                     }
                 },
+                network: {
+                    mode: activeNet,
+                    proxy_host: document.getElementById('net-proxy-host').value,
+                    proxy_port: parseInt(toEnglishDigits(document.getElementById('net-proxy-port').value)) || 7890
+                },
+                core_manager: {
+                    preferred_arch: document.getElementById('core-arch-pref').value,
+                    channel: document.getElementById('core-channel-select').value
+                },
+                scheduler: {
+                    enabled: document.getElementById('sched-enabled').checked,
+                    interval_val: parseFloat(toEnglishDigits(document.getElementById('sched-interval-val').value)) || 60,
+                    interval_unit: document.getElementById('sched-interval-unit').value,
+                    quiet_hours_enabled: document.getElementById('sched-quiet-enabled').checked,
+                    quiet_start: document.getElementById('sched-quiet-start').value,
+                    quiet_end: document.getElementById('sched-quiet-end').value
+                },
                 tests: {
-                    ping: { enabled: document.getElementById('test-ping').checked },
+                    ping: {
+                        enabled: document.getElementById('test-ping').checked,
+                        test_url: document.getElementById('test-ping-url').value,
+                        timeout_val: parseFloat(toEnglishDigits(document.getElementById('test-ping-timeout-val').value)) || 3,
+                        timeout_unit: document.getElementById('test-ping-timeout-unit').value,
+                        concurrency: parseInt(toEnglishDigits(document.getElementById('test-ping-concurrency').value)) || 30
+                    },
                     geo_flag: { enabled: document.getElementById('test-geo').checked },
-                    gemini: { enabled: document.getElementById('test-gemini').checked },
+                    gemini: {
+                        enabled: document.getElementById('test-gemini').checked,
+                        level: parseInt(document.getElementById('gemini-level-select') ? document.getElementById('gemini-level-select').value : 2) || 2,
+                        api_key: document.getElementById('gemini-api-key') ? document.getElementById('gemini-api-key').value.trim() : "",
+                        cookies_str: document.getElementById('gemini-cookies') ? document.getElementById('gemini-cookies').value.trim() : "",
+                        timeout_val: 8,
+                        timeout_unit: "s",
+                        concurrency: 15
+                    },
                     website_accessibility: {
                         enabled: document.getElementById('test-sites').checked,
-                        sites: document.getElementById('test-sites-list').value.split('\n').map(x => x.trim()).filter(Boolean)
+                        sites: document.getElementById('test-sites-list').value.split('\n').map(l => l.trim()).filter(l => l)
                     },
-                    download_speed: { enabled: document.getElementById('test-download').checked },
-                    upload_speed: { enabled: document.getElementById('test-upload').checked },
+                    download_speed: {
+                        enabled: document.getElementById('test-download').checked,
+                        test_url: document.getElementById('test-down-url').value,
+                        duration_val: parseFloat(toEnglishDigits(document.getElementById('test-down-duration-val').value)) || 5,
+                        duration_unit: document.getElementById('test-down-duration-unit').value,
+                        concurrency: parseInt(toEnglishDigits(document.getElementById('test-down-concurrency').value)) || 5
+                    },
                     udp: { enabled: document.getElementById('test-udp').checked },
                     stability: { enabled: document.getElementById('test-stability').checked },
                     fraud_score: { enabled: document.getElementById('test-fraud').checked }
+                },
+                testing_rounds: {
+                    rounds_count: parseInt(toEnglishDigits(document.getElementById('rounds-count') ? document.getElementById('rounds-count').value : "1")) || 1,
+                    interval_between_rounds_sec: parseFloat(toEnglishDigits(document.getElementById('rounds-interval') ? document.getElementById('rounds-interval').value : "15")) || 15,
+                    min_passed_rounds: parseInt(toEnglishDigits(document.getElementById('rounds-min-passed') ? document.getElementById('rounds-min-passed').value : "1")) || 1
+                },
+                output_filters: {
+                    min_score: parseFloat(toEnglishDigits(document.getElementById('out-min-score') ? document.getElementById('out-min-score').value : "0")) || 0.0,
+                    only_gemini_passed: document.getElementById('out-only-gemini') ? document.getElementById('out-only-gemini').checked : false,
+                    filter_previously_sent: document.getElementById('out-filter-sent') ? document.getElementById('out-filter-sent').checked : false,
+                    per_protocol_limits: {
+                        vless: parseInt(toEnglishDigits(document.getElementById('cap-vless') ? document.getElementById('cap-vless').value : "0")) || 0,
+                        vmess: parseInt(toEnglishDigits(document.getElementById('cap-vmess') ? document.getElementById('cap-vmess').value : "0")) || 0,
+                        trojan: parseInt(toEnglishDigits(document.getElementById('cap-trojan') ? document.getElementById('cap-trojan').value : "0")) || 0,
+                        shadowsocks: parseInt(toEnglishDigits(document.getElementById('cap-ss') ? document.getElementById('cap-ss').value : "0")) || 0,
+                        hysteria2: parseInt(toEnglishDigits(document.getElementById('cap-hy2') ? document.getElementById('cap-hy2').value : "0")) || 0,
+                        tuic: parseInt(toEnglishDigits(document.getElementById('cap-tuic') ? document.getElementById('cap-tuic').value : "0")) || 0,
+                        openvpn: parseInt(toEnglishDigits(document.getElementById('cap-openvpn') ? document.getElementById('cap-openvpn').value : "0")) || 0,
+                        wireguard: parseInt(toEnglishDigits(document.getElementById('cap-wireguard') ? document.getElementById('cap-wireguard').value : "0")) || 0
+                    }
+                },
+                telegram_sender: {
+                    enabled: document.getElementById('tg-enabled') ? document.getElementById('tg-enabled').checked : false,
+                    bot_token: document.getElementById('tg-bot-token') ? document.getElementById('tg-bot-token').value.trim() : "",
+                    channel_id: document.getElementById('tg-channel-id') ? document.getElementById('tg-channel-id').value.trim() : "",
+                    caption: document.getElementById('tg-caption') ? document.getElementById('tg-caption').value.trim() : "",
+                    send_files: document.getElementById('tg-send-files') ? document.getElementById('tg-send-files').checked : true,
+                    send_summary: document.getElementById('tg-send-summary') ? document.getElementById('tg-send-summary').checked : true
                 },
                 filters: {
                     filter_expired: document.getElementById('filter-expired').checked,
@@ -1074,12 +1827,88 @@ https://x.com</textarea>
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
                 });
-                const ret = await res.json();
-                if (ret.ok) {
-                    alert('✅ تنظیمات با موفقیت ذخیره شد.');
+                const d = await res.json();
+                if (d.ok) {
+                    btn.innerText = '✅ ذخیره شد';
+                    setTimeout(() => { btn.innerText = '💾 ذخیره تنظیمات'; }, 1800);
+                } else {
+                    btn.innerText = '❌ خطا';
                 }
             } catch (e) {
-                alert('خطا در ذخیره تنظیمات: ' + e);
+                btn.innerText = '❌ خطا در ذخیره';
+            }
+        }
+
+        async function testTelegramConnection() {
+            const resEl = document.getElementById('tg-test-result');
+            const token = document.getElementById('tg-bot-token').value.trim();
+            if (!token) {
+                resEl.innerText = '⚠️ ابتدا توکن ربات را وارد کنید';
+                resEl.style.color = 'var(--md-sys-color-warning)';
+                return;
+            }
+            resEl.innerText = '⏳ در حال تست اتصال به تلگرام...';
+            resEl.style.color = 'var(--md-sys-color-primary)';
+            try {
+                const res = await fetch('/api/test_telegram', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({bot_token: token})
+                });
+                const d = await res.json();
+                if (d.ok) {
+                    resEl.innerText = '✅ ' + (d.message || 'اتصال ربات تایید شد!');
+                    resEl.style.color = 'var(--md-sys-color-success)';
+                } else {
+                    resEl.innerText = '❌ ' + (d.message || d.error || 'خطا در اتصال');
+                    resEl.style.color = 'var(--md-sys-color-error)';
+                }
+            } catch (e) {
+                resEl.innerText = '❌ خطا: ' + e;
+                resEl.style.color = 'var(--md-sys-color-error)';
+            }
+        }
+
+        async function testGeminiConnection() {
+            const resEl = document.getElementById('gemini-test-result');
+            const level = parseInt(document.getElementById('gemini-level-select') ? document.getElementById('gemini-level-select').value : 2) || 2;
+            const apiKey = document.getElementById('gemini-api-key') ? document.getElementById('gemini-api-key').value.trim() : "";
+            const cookies = document.getElementById('gemini-cookies') ? document.getElementById('gemini-cookies').value.trim() : "";
+
+            resEl.innerText = '⏳ در حال تست دسترسی به هوش مصنوعی جمنای...';
+            resEl.style.color = 'var(--md-sys-color-primary)';
+            try {
+                const res = await fetch('/api/test_gemini', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({level: level, api_key: apiKey, cookies_str: cookies})
+                });
+                const d = await res.json();
+                if (d.ok) {
+                    resEl.innerText = '✅ ' + (d.message || 'دسترسی به جمنای برقرار است!');
+                    resEl.style.color = 'var(--md-sys-color-success)';
+                } else {
+                    resEl.innerText = '❌ ' + (d.message || 'خطا در اتصال به جمنای');
+                    resEl.style.color = 'var(--md-sys-color-error)';
+                }
+            } catch (e) {
+                resEl.innerText = '❌ خطا: ' + e;
+                resEl.style.color = 'var(--md-sys-color-error)';
+            }
+        }
+
+        async function clearSentHistory() {
+            const resEl = document.getElementById('history-clear-status');
+            resEl.innerText = '⏳ در حال پاکسازی...';
+            try {
+                const res = await fetch('/api/clear_history', {method: 'POST'});
+                const d = await res.json();
+                resEl.innerText = d.message || '✅ پاکسازی شد';
+                resEl.style.color = 'var(--md-sys-color-success)';
+                setTimeout(() => { resEl.innerText = ''; }, 3000);
+            } catch (e) {
+                resEl.innerText = '❌ خطا در پاکسازی';
+                resEl.style.color = 'var(--md-sys-color-error)';
             }
         }
 
@@ -1087,51 +1916,154 @@ https://x.com</textarea>
             const btn = document.getElementById('btn-start');
             btn.disabled = true;
             try {
+                await saveAllSettings();
                 await fetch('/api/run', { method: 'POST' });
             } catch (e) {
+                console.error("Start failed:", e);
                 btn.disabled = false;
             }
+        }
+
+        async function loadAnalytics() {
+            try {
+                const res = await fetch('/api/analytics');
+                const data = await res.json();
+                if (!data || !data.protocol_breakdown) return;
+                currentAnalyticsData = data;
+
+                // Populate source filter dropdown
+                const sel = document.getElementById('analytics-source-filter');
+                sel.innerHTML = '<option value="all">🌟 همه منابع (گزارش سراسری)</option>';
+                if (data.per_source_map) {
+                    for (const [srcName, srcInfo] of Object.entries(data.per_source_map)) {
+                        const opt = document.createElement('option');
+                        opt.value = srcName;
+                        opt.innerText = `${srcInfo.type === 'telegram' ? '✈️' : (srcInfo.type === 'container' ? '📦' : '🌐')} ${srcName} (${srcInfo.discovered} کانفیگ)`;
+                        sel.appendChild(opt);
+                    }
+                }
+
+                renderAnalytics(data);
+            } catch (e) {}
+        }
+
+        function filterAnalyticsBySource() {
+            if (!currentAnalyticsData) return;
+            const srcKey = document.getElementById('analytics-source-filter').value;
+            if (srcKey === 'all') {
+                renderAnalytics(currentAnalyticsData);
+            } else {
+                const srcInfo = currentAnalyticsData.per_source_map[srcKey];
+                if (srcInfo) {
+                    renderSourceSpecificAnalytics(srcInfo);
+                }
+            }
+        }
+
+        function renderAnalytics(data) {
+            // Protocols Table
+            const tblProto = document.getElementById('tbl-protocols');
+            tblProto.innerHTML = '';
+            for (const [p, count] of Object.entries(data.protocol_breakdown || {})) {
+                tblProto.innerHTML += `<tr><td><strong>${p.toUpperCase()}</strong></td><td>${toPersianDigits(count)}</td><td>پشتیبانی کامل ✅</td></tr>`;
+            }
+
+            // Transports
+            const tr = data.transports || {};
+            document.getElementById('stat-trans-ws').innerText = toPersianDigits(tr.ws || 0);
+            document.getElementById('stat-trans-grpc').innerText = toPersianDigits(tr.grpc || 0);
+            document.getElementById('stat-trans-tcp').innerText = toPersianDigits(tr.tcp || 0);
+            document.getElementById('stat-trans-http').innerText = toPersianDigits(tr.http || 0);
+
+            // Security
+            const sec = data.security || {};
+            document.getElementById('stat-sec-reality').innerText = toPersianDigits(sec.reality || 0);
+            document.getElementById('stat-sec-tls').innerText = toPersianDigits(sec.tls || 0);
+
+            // Containers
+            const tblCont = document.getElementById('tbl-containers');
+            tblCont.innerHTML = '';
+            for (const [ext, count] of Object.entries(data.containers || {})) {
+                tblCont.innerHTML += `<tr><td>${ext}</td><td>${toPersianDigits(count)}</td></tr>`;
+            }
+
+            // Top sources
+            const tblSrc = document.getElementById('tbl-top-sources');
+            tblSrc.innerHTML = '';
+            (data.top_sources || []).slice(0, 10).forEach(s => {
+                tblSrc.innerHTML += `<tr><td><code>${s.source}</code></td><td>${toPersianDigits(s.discovered)}</td><td>${toPersianDigits(s.alive)}</td><td>${toPersianDigits(s.survival_rate)}٪</td><td>${toPersianDigits(s.avg_ping_ms)}ms</td></tr>`;
+            });
+        }
+
+        function renderSourceSpecificAnalytics(srcInfo) {
+            // Protocols Table for this source
+            const tblProto = document.getElementById('tbl-protocols');
+            tblProto.innerHTML = '';
+            for (const [p, count] of Object.entries(srcInfo.protocols || {})) {
+                tblProto.innerHTML += `<tr><td><strong>${p.toUpperCase()}</strong></td><td>${toPersianDigits(count)}</td><td>پشتیبانی کامل ✅</td></tr>`;
+            }
+
+            // Transports
+            const tr = srcInfo.transports || {};
+            document.getElementById('stat-trans-ws').innerText = toPersianDigits(tr.ws || 0);
+            document.getElementById('stat-trans-grpc').innerText = toPersianDigits(tr.grpc || 0);
+            document.getElementById('stat-trans-tcp').innerText = toPersianDigits(tr.tcp || 0);
+            document.getElementById('stat-trans-http').innerText = toPersianDigits(tr.http || 0);
+
+            // Security
+            const sec = srcInfo.security || {};
+            document.getElementById('stat-sec-reality').innerText = toPersianDigits(sec.reality || 0);
+            document.getElementById('stat-sec-tls').innerText = toPersianDigits(sec.tls || 0);
         }
 
         async function pollStatus() {
             try {
                 const res = await fetch('/api/status');
-                const data = await res.json();
-
+                const st = await res.json();
+                
                 const btn = document.getElementById('btn-start');
                 const badge = document.getElementById('runner-badge');
-                const statusText = document.getElementById('runner-status-text');
-                const pBar = document.getElementById('progress-bar');
-                const pPercent = document.getElementById('progress-percent');
+                const statusTxt = document.getElementById('runner-status-text');
+                const pFill = document.getElementById('progress-bar');
+                const pTxt = document.getElementById('progress-percent');
                 const term = document.getElementById('terminal-box');
 
-                btn.disabled = data.running;
-                badge.innerText = data.running ? 'در حال اجرا...' : 'آماده به کار';
-                badge.style.color = data.running ? 'var(--md-sys-color-warning)' : 'var(--md-sys-color-primary)';
-                statusText.innerText = data.status_text;
-                pBar.style.width = data.progress + '%';
-                pPercent.innerText = data.progress + '%';
+                if (st.running) {
+                    btn.disabled = true;
+                    badge.innerText = 'در حال اجرا...';
+                    badge.style.borderColor = 'var(--md-sys-color-warning)';
+                    badge.style.color = 'var(--md-sys-color-warning)';
+                } else {
+                    btn.disabled = false;
+                    badge.innerText = 'آماده به کار';
+                    badge.style.borderColor = 'rgba(56, 189, 248, 0.3)';
+                    badge.style.color = 'var(--md-sys-color-primary)';
+                }
 
-                if (data.logs && data.logs.length > 0) {
-                    term.innerHTML = data.logs.map(l => '<div>' + l + '</div>').join('');
+                statusTxt.innerText = st.status_text || '';
+                pFill.style.width = (st.progress || 0) + '%';
+                pTxt.innerText = toPersianDigits(st.progress || 0) + '%';
+
+                if (st.logs && st.logs.length) {
+                    term.innerHTML = st.logs.join('\n');
                     term.scrollTop = term.scrollHeight;
                 }
 
-                if (data.last_result) {
-                    const r = data.last_result;
-                    if (r.total_discovered) document.getElementById('stat-discovered').innerText = r.total_discovered.toLocaleString('fa-IR');
-                    if (r.total_duplicates_dropped || r.total_expired_dropped) {
-                        const filt = (r.total_duplicates_dropped || 0) + (r.total_expired_dropped || 0) + (r.total_broken_dropped || 0);
-                        document.getElementById('stat-filtered').innerText = filt.toLocaleString('fa-IR');
+                // Check core download status if downloading
+                const cRes = await fetch('/api/core/download_status');
+                const cData = await cRes.json();
+                const cTxt = document.getElementById('core-download-text');
+                const cBtn = document.getElementById('btn-download-core');
+                if (cData.downloading) {
+                    cTxt.innerText = cData.status_text;
+                    cBtn.disabled = true;
+                } else {
+                    if (cData.status_text !== 'آماده') {
+                        cTxt.innerText = cData.status_text;
                     }
-                    if (r.total_unique) document.getElementById('stat-survivors').innerText = r.total_unique.toLocaleString('fa-IR');
-                    if (r.total_expired_dropped !== undefined) {
-                        document.getElementById('stat-expired-count').innerText = r.total_expired_dropped.toLocaleString('fa-IR') + ' کانفیگ';
-                    }
-                    if (r.total_duplicates_dropped !== undefined) {
-                        document.getElementById('stat-duplicates-count').innerText = r.total_duplicates_dropped.toLocaleString('fa-IR') + ' کانفیگ';
-                    }
+                    cBtn.disabled = false;
                 }
+
             } catch (e) {}
         }
 
@@ -1150,6 +2082,28 @@ class GUIHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.end_headers()
             self.wfile.write(HTML_TEMPLATE.encode("utf-8"))
+        elif url.path == "/app_icon.png":
+            icon_path = os.path.join(BASE_DIR, "app_icon.png")
+            if os.path.exists(icon_path):
+                self.send_response(200)
+                self.send_header("Content-Type", "image/png")
+                self.end_headers()
+                with open(icon_path, "rb") as f:
+                    self.wfile.write(f.read())
+            else:
+                self.send_response(404)
+                self.end_headers()
+        elif url.path in ["/favicon.ico", "/app_icon.ico"]:
+            icon_path = os.path.join(BASE_DIR, "app_icon.ico")
+            if os.path.exists(icon_path):
+                self.send_response(200)
+                self.send_header("Content-Type", "image/x-icon")
+                self.end_headers()
+                with open(icon_path, "rb") as f:
+                    self.wfile.write(f.read())
+            else:
+                self.send_response(404)
+                self.end_headers()
         elif url.path == "/api/status":
             self.send_response(200)
             self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -1160,6 +2114,36 @@ class GUIHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.end_headers()
             self.wfile.write(json.dumps(load_settings(), ensure_ascii=False).encode("utf-8"))
+        elif url.path == "/api/core/status":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.end_headers()
+            c_info = {"installed": False, "version": None, "detected_arch": "windows-amd64-compatible"}
+            if core_manager:
+                loc = core_manager.get_local_core_info()
+                arch = core_manager.detect_cpu_architecture()
+                c_info = {
+                    "installed": loc.get("installed", False),
+                    "version": loc.get("version"),
+                    "detected_arch": arch,
+                    "message_fa": loc.get("message_fa")
+                }
+            self.wfile.write(json.dumps(c_info, ensure_ascii=False).encode("utf-8"))
+        elif url.path == "/api/core/download_status":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(json.dumps(CORE_DOWNLOAD_STATE, ensure_ascii=False).encode("utf-8"))
+        elif url.path == "/api/analytics":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.end_headers()
+            report_file = os.path.join(OUTPUT_DIR, "analytics_report.json")
+            if os.path.exists(report_file):
+                with open(report_file, "r", encoding="utf-8") as f:
+                    self.wfile.write(f.read().encode("utf-8"))
+            else:
+                self.wfile.write(b'{}')
         elif url.path.startswith("/download/"):
             filename = os.path.basename(url.path)
             filepath = os.path.join(OUTPUT_DIR, filename)
@@ -1187,13 +2171,42 @@ class GUIHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "application/json")
             self.end_headers()
             self.wfile.write(b'{"status":"started"}')
+        elif url.path == "/api/core/download":
+            content_len = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(content_len).decode("utf-8") if content_len else "{}"
+            req_data = json.loads(body) if body else {}
+            
+            def dl_worker():
+                global CORE_DOWNLOAD_STATE
+                CORE_DOWNLOAD_STATE["downloading"] = True
+                CORE_DOWNLOAD_STATE["progress"] = 10
+                CORE_DOWNLOAD_STATE["status_text"] = "در حال اتصال به گیت‌هاب..."
+                
+                def cb(pct, text):
+                    CORE_DOWNLOAD_STATE["progress"] = pct
+                    CORE_DOWNLOAD_STATE["status_text"] = text
+
+                if core_manager:
+                    res = core_manager.download_and_install_core(
+                        arch_pref=req_data.get("arch", "auto"),
+                        channel=req_data.get("channel", "stable"),
+                        proxy_dict={'http': 'http://127.0.0.1:7890', 'https': 'http://127.0.0.1:7890'},
+                        progress_cb=cb
+                    )
+                    CORE_DOWNLOAD_STATE["status_text"] = res.get("message_fa", "عملیات هسته انجام شد")
+                CORE_DOWNLOAD_STATE["downloading"] = False
+
+            threading.Thread(target=dl_worker, daemon=True).start()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"ok": True, "message": "دانلود هسته آغاز شد"}, ensure_ascii=False).encode("utf-8"))
         elif url.path == "/api/save_settings":
             content_len = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(content_len).decode("utf-8")
             try:
                 data = json.loads(body)
                 current = load_settings()
-                # Update current with incoming data
                 for k, v in data.items():
                     if isinstance(v, dict) and k in current and isinstance(current[k], dict):
                         current[k].update(v)
@@ -1209,6 +2222,40 @@ class GUIHandler(BaseHTTPRequestHandler):
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
                 self.wfile.write(json.dumps({"ok": False, "error": str(e)}).encode("utf-8"))
+        elif url.path == "/api/test_telegram":
+            content_len = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(content_len).decode("utf-8") if content_len else "{}"
+            req_data = json.loads(body) if body else {}
+            bot_token = req_data.get("bot_token", "")
+            res = {"ok": False, "message": "ماژول ارسال تلگرام در دسترس نیست"}
+            if telegram_sender:
+                res = telegram_sender.test_bot_token(bot_token)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(json.dumps(res, ensure_ascii=False).encode("utf-8"))
+        elif url.path == "/api/test_gemini":
+            content_len = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(content_len).decode("utf-8") if content_len else "{}"
+            req_data = json.loads(body) if body else {}
+            lvl = int(req_data.get("level", 2))
+            key = req_data.get("api_key", "").strip()
+            cookies = req_data.get("cookies_str", "").strip()
+            res = {"ok": False, "message": "ماژول ارزیابی هوش مصنوعی در دسترس نیست"}
+            if gemini_tester:
+                check_res = gemini_tester.run_gemini_test(level=lvl, api_key=key, cookies_str=cookies, timeout=10.0)
+                res = {"ok": (check_res.get("status") == "ok"), "message": check_res.get("message", "")}
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(json.dumps(res, ensure_ascii=False).encode("utf-8"))
+        elif url.path == "/api/clear_history":
+            if exporter:
+                exporter.save_sent_history(set())
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(json.dumps({"ok": True, "message": "تاریخچه ارسال با موفقیت پاکسازی شد"}, ensure_ascii=False).encode("utf-8"))
         else:
             self.send_response(404)
             self.end_headers()
@@ -1231,19 +2278,29 @@ def find_edge_or_chrome():
 def launch_desktop_window(url):
     browser_path = find_edge_or_chrome()
     if browser_path:
-        # Launch dedicated application window (no address bar, no browser tabs)
-        subprocess.Popen([browser_path, f"--app={url}", "--window-size=1250,850"])
+        subprocess.Popen([browser_path, f"--app={url}", "--window-size=1280,870"])
     else:
         import webbrowser
         webbrowser.open(url)
 
+def launch_tray_icon():
+    tray_script = os.path.join(BASE_DIR, "tools", "tray_helper.ps1")
+    if os.path.exists(tray_script):
+        try:
+            creation_flag = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+            subprocess.Popen([
+                "powershell", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass",
+                "-File", tray_script, "-Port", str(PORT),
+                "-IconPath", os.path.join(BASE_DIR, "app_icon.ico")
+            ], creationflags=creation_flag)
+        except Exception as e:
+            print("Tray launch error:", e)
+
 def main():
     server = HTTPServer(("127.0.0.1", PORT), GUIHandler)
     url = f"http://127.0.0.1:{PORT}"
-    
-    # Launch dedicated window
     threading.Thread(target=lambda: (time.sleep(0.6), launch_desktop_window(url)), daemon=True).start()
-
+    threading.Thread(target=lambda: (time.sleep(1.2), launch_tray_icon()), daemon=True).start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:

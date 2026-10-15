@@ -20,12 +20,27 @@ import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import yaml
 
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+TOOLS_DIR = os.path.join(BASE_DIR, "tools")
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
+if TOOLS_DIR not in sys.path:
+    sys.path.insert(0, TOOLS_DIR)
+
+try:
+    from tools.gemini_tester import run_gemini_test
+    from tools.exporter import export_all_formats
+    from tools.telegram_sender import send_telegram_message, send_telegram_document
+except ImportError:
+    from gemini_tester import run_gemini_test
+    from exporter import export_all_formats
+    from telegram_sender import send_telegram_message, send_telegram_document
+
 if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 if sys.stderr and hasattr(sys.stderr, 'reconfigure'):
     sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SETTINGS_PATH = os.path.join(BASE_DIR, "config", "settings.json")
 OUTPUT_DIR = os.path.join(BASE_DIR, "output")
 PROXY_HOST = "127.0.0.1"
@@ -103,6 +118,11 @@ class ConfigNode:
         self.packet_loss = 0.0
         self.fraud_score = 15
         self.score = 0.0
+        self.passed_rounds = 0
+        self.round_pings = []
+        self.gemini_passed = False
+        self.gemini_level = 0
+        self.gemini_msg = ""
 
     def fingerprint(self):
         core = f"{self.protocol}|{self.server}|{self.port}|{self.params.get('uuid','')}|{self.params.get('password','')}|{self.params.get('path','')}|{self.params.get('public_key','')}|{self.params.get('sni','')}"
@@ -604,18 +624,69 @@ def main():
         else:
             print(f"   ⚠️ Directory not found: {test_files_dir}")
 
-    # 2. Process Remote Subscriptions
-    if active_mode in ["all", "subscriptions"] and subs_cfg.get("enabled", True):
-        print(f"\n🌐 Fetching Subscription URLs (via proxy 127.0.0.1:7890)...")
-        proxy_handler = urllib.request.ProxyHandler({'http': f'http://{PROXY_HOST}:{PROXY_PORT}', 'https': f'http://{PROXY_HOST}:{PROXY_PORT}'})
-        opener = urllib.request.build_opener(proxy_handler)
+    # Network Opener setup
+    net_cfg = settings.get("network", {})
+    net_mode = net_cfg.get("mode", "system_proxy")
+    net_host = net_cfg.get("proxy_host", "127.0.0.1")
+    net_port = net_cfg.get("proxy_port", 7890)
 
+    if net_mode == "direct":
+        net_opener = urllib.request.build_opener()
+        print(f"   🌐 Network Mode: Direct (No Proxy)")
+    elif net_mode == "socks5_proxy":
+        proxy_url = f"socks5://{net_host}:{net_port}"
+        net_opener = urllib.request.build_opener(urllib.request.ProxyHandler({'http': proxy_url, 'https': proxy_url}))
+        print(f"   🌐 Network Mode: SOCKS5 Proxy ({net_host}:{net_port})")
+    elif net_mode == "http_proxy":
+        proxy_url = f"http://{net_host}:{net_port}"
+        net_opener = urllib.request.build_opener(urllib.request.ProxyHandler({'http': proxy_url, 'https': proxy_url}))
+        print(f"   🌐 Network Mode: HTTP Proxy ({net_host}:{net_port})")
+    else:  # system_proxy
+        net_opener = urllib.request.build_opener(urllib.request.ProxyHandler())
+        print(f"   🌐 Network Mode: System Proxy (Windows Default)")
+
+    # 2. Process Telegram Channels
+    tg_cfg = sources_cfg.get("telegram", {})
+    if active_mode in ["all", "telegram"] and tg_cfg.get("enabled", True):
+        tg_channels = tg_cfg.get("channels", [])
+        max_msgs = tg_cfg.get("max_messages_per_channel", 15)
+        print(f"\n📢 Fetching Telegram Channels ({len(tg_channels)} configured)...")
+        for chan in tg_channels[:25]:
+            clean_chan = chan.strip().lstrip("@")
+            if not clean_chan:
+                continue
+            try:
+                tg_url = f"https://t.me/s/{clean_chan}"
+                req = urllib.request.Request(tg_url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'})
+                with net_opener.open(req, timeout=8) as resp:
+                    html_data = resp.read().decode('utf-8', errors='ignore')
+                msg_texts = re.findall(r'<div class="tgme_widget_message_text[^"]*"[^>]*>(.*?)</div>', html_data, re.DOTALL)
+                chan_nodes = []
+                for msg in msg_texts[-max_msgs:]:
+                    plain = re.sub(r'<[^>]+>', ' ', msg)
+                    extracted = extract_nodes_from_content(plain, f"@{clean_chan}", source_type="telegram")
+                    chan_nodes.extend(extracted)
+                if chan_nodes:
+                    all_nodes.extend(chan_nodes)
+                    source_stats[f"@{clean_chan}"] = {
+                        "source_name": f"@{clean_chan}",
+                        "source_type": "telegram",
+                        "discovered": len(chan_nodes),
+                        "nodes": chan_nodes
+                    }
+                    print(f"   ✅ @{clean_chan}: Found {len(chan_nodes)} configs")
+            except Exception:
+                pass
+
+    # 3. Process Remote Subscriptions
+    if active_mode in ["all", "subscriptions"] and subs_cfg.get("enabled", True):
+        print(f"\n🌐 Fetching Subscription URLs...")
         for sub_url in sub_urls:
             sub_name = sub_url.split("/")[-1]
             print(f"   Fetching: {sub_name}...")
             try:
                 req = urllib.request.Request(sub_url, headers={'User-Agent': 'FreedomCollector/2.0'})
-                with opener.open(req, timeout=12) as resp:
+                with net_opener.open(req, timeout=12) as resp:
                     raw_data = resp.read().decode('utf-8', errors='ignore')
                 nodes = extract_nodes_from_content(raw_data, sub_name, source_type="subscription")
                 all_nodes.extend(nodes)
@@ -668,9 +739,13 @@ def main():
     print(f"   • Duplicates Dropped: {duplicate_count}")
     print(f"   • Surviving Unique Configs: {len(valid_nodes)}")
 
-    # 4. Multi-Probe Testing
-    print(f"\n⚡ Running Multi-Probe Testing on Survivors (Concurrency: 25)...")
-    survivors = []
+    # 4. Multi-Probe Testing (Multi-Round Interval Engine)
+    rounds_cfg = settings.get("testing_rounds", {})
+    rounds_count = max(1, int(rounds_cfg.get("rounds_count", 1)))
+    interval_between_sec = max(0.0, float(rounds_cfg.get("interval_between_rounds_sec", 15)))
+    min_passed_rounds = max(1, int(rounds_cfg.get("min_passed_rounds", 1)))
+
+    print(f"\n⚡ Running Multi-Round Testing ({rounds_count} rounds, interval: {interval_between_sec}s, required: {min_passed_rounds} passes)...")
     test_batch = valid_nodes[:200] if len(valid_nodes) > 200 else valid_nodes
     print(f"   Testing active batch of {len(test_batch)} configs...")
 
@@ -679,95 +754,221 @@ def main():
     udp_enabled = tests_cfg.get("udp", {}).get("enabled", True)
     stability_enabled = tests_cfg.get("stability", {}).get("enabled", True)
 
-    def probe_node(node):
-        if ping_enabled:
-            alive, ping = test_ping(node.server, node.port, timeout=2.0)
-            node.alive = alive
-            node.ping_ms = ping if alive else 9999.0
-            node.ping_micros = int(node.ping_ms * 1000)
-        else:
+    for r in range(1, rounds_count + 1):
+        print(f"\n🔄 --- Test Round {r}/{rounds_count} (Concurrency: 25) ---")
+        with ThreadPoolExecutor(max_workers=25) as executor:
+            def probe_round(node):
+                if ping_enabled:
+                    alive, ping = test_ping(node.server, node.port, timeout=2.0)
+                    if alive:
+                        node.passed_rounds += 1
+                        node.round_pings.append(ping)
+                else:
+                    node.passed_rounds += 1
+                    node.round_pings.append(100.0)
+                return node
+
+            futures = {executor.submit(probe_round, n): n for n in test_batch}
+            done_count = 0
+            alive_this_round = 0
+            for f in as_completed(futures):
+                done_count += 1
+                res = f.result()
+                if res.round_pings and len(res.round_pings) == r:
+                    alive_this_round += 1
+                if done_count % 50 == 0 or done_count == len(test_batch):
+                    print(f"   [Round {r}] Progress {done_count}/{len(test_batch)}... Alive in this round: {alive_this_round}")
+
+        if r < rounds_count and interval_between_sec > 0:
+            print(f"   ⏳ Waiting {interval_between_sec}s cooldown before Round {r+1}/{rounds_count}...")
+            time.sleep(interval_between_sec)
+
+    # Consolidate round results into survivors
+    survivors = []
+    for node in test_batch:
+        if node.passed_rounds >= min_passed_rounds:
             node.alive = True
-            node.ping_ms = 100.0
-            node.ping_micros = 100000
+            node.ping_ms = round(sum(node.round_pings) / len(node.round_pings), 2) if node.round_pings else 9999.0
+            node.ping_micros = int(node.ping_ms * 1000)
 
-        if geo_enabled:
-            node.country_code = resolve_country(node.server)
-            node.flag_emoji = COUNTRY_FLAGS.get(node.country_code, "🌐")
-        else:
-            node.country_code = "UN"
-            node.flag_emoji = "🌐"
+            if geo_enabled:
+                node.country_code = resolve_country(node.server)
+                node.flag_emoji = COUNTRY_FLAGS.get(node.country_code, "🌐")
+            else:
+                node.country_code = "UN"
+                node.flag_emoji = "🌐"
 
-        if node.alive:
             if udp_enabled:
                 node.udp_supported = test_udp(node.server, node.port)
             else:
                 node.udp_supported = False
 
             if stability_enabled:
-                node.jitter_ms = round(abs(node.ping_ms * 0.12), 2)
+                if len(node.round_pings) > 1:
+                    mean_p = sum(node.round_pings) / len(node.round_pings)
+                    node.jitter_ms = round(sum(abs(p - mean_p) for p in node.round_pings) / len(node.round_pings), 2)
+                else:
+                    node.jitter_ms = round(abs(node.ping_ms * 0.12), 2)
             else:
                 node.jitter_ms = 0.0
 
             node.score = calculate_score(node.ping_ms, node.jitter_ms, node.udp_supported, node.fraud_score, node.fingerprint())
+            survivors.append(node)
         else:
+            node.alive = False
             node.score = 0.0
-        return node
 
-    with ThreadPoolExecutor(max_workers=25) as executor:
-        futures = {executor.submit(probe_node, n): n for n in test_batch}
-        done_count = 0
-        for f in as_completed(futures):
-            done_count += 1
-            res = f.result()
-            if res.alive:
-                survivors.append(res)
-            if done_count % 50 == 0 or done_count == len(test_batch):
-                print(f"   Tested {done_count}/{len(test_batch)}... Alive: {len(survivors)}")
+    print(f"\n🎯 Multi-Round Testing Finished: {len(survivors)}/{len(test_batch)} configs survived (passed >={min_passed_rounds}/{rounds_count} rounds)")
+
+    # 4.1 Gemini Deep Probe
+    gemini_cfg = tests_cfg.get("gemini", {})
+    if gemini_cfg.get("enabled", False) and survivors:
+        g_level = int(gemini_cfg.get("level", 2))
+        g_key = gemini_cfg.get("api_key", "").strip()
+        g_cookies = gemini_cfg.get("cookies_str", "").strip()
+        g_timeout = float(gemini_cfg.get("timeout_val", 8))
+        print(f"\n🤖 Running Deep Gemini AI Probe (Level {g_level}) on {len(survivors)} surviving configs...")
+
+        def probe_node_gemini(node):
+            blocked_regions = ["IR", "RU", "CN", "CU", "KP", "SY"]
+            if node.country_code in blocked_regions:
+                node.gemini_passed = False
+                node.gemini_msg = f"تحریم منطقه ({node.country_code})"
+            else:
+                probe_res = run_gemini_test(level=g_level, opener=net_opener, api_key=g_key, cookies_str=g_cookies, timeout=g_timeout)
+                node.gemini_passed = (probe_res.get("status") == "ok")
+                node.gemini_msg = probe_res.get("message", "")
+                node.gemini_level = g_level
+                if node.gemini_passed:
+                    node.score += 5.0
+            return node
+
+        with ThreadPoolExecutor(max_workers=15) as executor:
+            f_gemini = [executor.submit(probe_node_gemini, n) for n in survivors]
+            for f in as_completed(f_gemini):
+                f.result()
+
+        gemini_pass_count = sum(1 for n in survivors if n.gemini_passed)
+        print(f"   ✅ Gemini Probe Completed: {gemini_pass_count}/{len(survivors)} passed Google Gemini access")
 
     # Sort survivors by score descending
     survivors.sort(key=lambda x: x.score, reverse=True)
 
     # 5. Compile Analytics & Statistics
     print(f"\n📈 Calculating Comprehensive Analytics & Statistics...")
-    proto_counts = {}
-    feature_counts = {"reality": 0, "ws": 0, "grpc": 0, "tls": 0, "udp": 0}
+
+    pure_protocols = {}
+    transports_map = {"tcp": 0, "ws": 0, "grpc": 0, "http": 0, "quic": 0}
+    security_map = {"reality": 0, "tls": 0, "utls": 0, "shadowtls": 0, "none": 0}
     mihomo_compat_count = 0
 
     for n in valid_nodes:
-        p = n.protocol
-        proto_counts[p] = proto_counts.get(p, 0) + 1
+        # Pure protocol name
+        p = n.protocol.lower().strip()
+        pure_protocols[p] = pure_protocols.get(p, 0) + 1
+
         if n.is_mihomo_compatible():
             mihomo_compat_count += 1
-        sec = n.params.get("security", "")
-        net = n.params.get("network", "")
-        if sec == "reality": feature_counts["reality"] += 1
-        if sec == "tls": feature_counts["tls"] += 1
-        if net == "ws": feature_counts["ws"] += 1
-        if net == "grpc": feature_counts["grpc"] += 1
-        if n.udp_supported or n.protocol in ["hysteria2", "tuic", "openvpn", "wireguard"]:
-            feature_counts["udp"] += 1
 
-    # Per source analytics
+        # Security breakdown
+        sec = str(n.params.get("security", "")).lower()
+        if sec == "reality":
+            security_map["reality"] += 1
+        elif sec in ["tls", "xtls"]:
+            security_map["tls"] += 1
+        elif "utls" in sec or n.params.get("client-fingerprint"):
+            security_map["utls"] += 1
+        elif "shadow" in sec:
+            security_map["shadowtls"] += 1
+        else:
+            security_map["none"] += 1
+
+        # Transport breakdown
+        net = str(n.params.get("network", "") or n.params.get("type", "")).lower()
+        if "ws" in net or "websocket" in net:
+            transports_map["ws"] += 1
+        elif "grpc" in net:
+            transports_map["grpc"] += 1
+        elif "http" in net or "h2" in net or "xhttp" in net:
+            transports_map["http"] += 1
+        elif "quic" in net or n.protocol in ["hysteria2", "tuic"]:
+            transports_map["quic"] += 1
+        else:
+            transports_map["tcp"] += 1
+
+    # Container breakdown from bridge or extensions
+    container_stats = {}
+    if 'bridge_data' in locals() and bridge_data.get("ok"):
+        container_stats = bridge_data.get("stats", {}).get("byExtension", {})
+    if not container_stats:
+        for s_name in source_stats.keys():
+            ext = os.path.splitext(s_name)[1].lower()
+            if ext in [".ehi", ".hat", ".npvt", ".nm", ".dark", ".hc", ".ovpn", ".slip", ".ssc"]:
+                container_stats[ext] = container_stats.get(ext, 0) + 1
+
+    # Per-source comprehensive analytics map
+    per_source_map = {}
     source_analytics_list = []
+
     for s_name, s_data in source_stats.items():
-        disc = s_data["discovered"]
-        if disc == 0: continue
-        s_nodes = s_data["nodes"]
+        disc = s_data.get("discovered", 0)
+        if disc == 0:
+            continue
+        s_nodes = s_data.get("nodes", [])
         alive_s = [n for n in s_nodes if n.alive]
         pings = [n.ping_ms for n in alive_s if n.ping_ms < 5000]
         avg_ping = round(sum(pings) / len(pings), 1) if pings else 0.0
         survival_rate = round((len(alive_s) / disc) * 100.0, 1) if disc else 0.0
-        source_analytics_list.append({
+
+        s_protos = {}
+        s_transports = {"tcp": 0, "ws": 0, "grpc": 0, "http": 0, "quic": 0}
+        s_security = {"reality": 0, "tls": 0, "utls": 0, "none": 0}
+        for sn in s_nodes:
+            sp = sn.protocol.lower().strip()
+            s_protos[sp] = s_protos.get(sp, 0) + 1
+            snet = str(sn.params.get("network", "")).lower()
+            if "ws" in snet: s_transports["ws"] += 1
+            elif "grpc" in snet: s_transports["grpc"] += 1
+            elif "http" in snet: s_transports["http"] += 1
+            elif "quic" in snet: s_transports["quic"] += 1
+            else: s_transports["tcp"] += 1
+            ssec = str(sn.params.get("security", "")).lower()
+            if "reality" in ssec: s_security["reality"] += 1
+            elif "tls" in ssec: s_security["tls"] += 1
+            elif "utls" in ssec: s_security["utls"] += 1
+            else: s_security["none"] += 1
+
+        source_info = {
             "source": s_name,
-            "type": s_data["source_type"],
+            "type": s_data.get("source_type", "unknown"),
             "discovered": disc,
             "alive": len(alive_s),
             "survival_rate": survival_rate,
-            "avg_ping_ms": avg_ping
-        })
+            "avg_ping_ms": avg_ping,
+            "protocols": s_protos,
+            "transports": s_transports,
+            "security": s_security
+        }
+        per_source_map[s_name] = source_info
+        source_analytics_list.append(source_info)
 
     # Rank sources
     ranked_sources = sorted(source_analytics_list, key=lambda x: (x["survival_rate"], -x["avg_ping_ms"] if x["avg_ping_ms"] > 0 else 9999), reverse=True)
+
+    # Country distribution
+    country_counts = {}
+    for n in (survivors if survivors else valid_nodes[:100]):
+        cc = n.country_code or "UN"
+        country_counts[cc] = country_counts.get(cc, 0) + 1
+
+    country_dist = {}
+    total_geo = sum(country_counts.values()) or 1
+    for cc, cnt in sorted(country_counts.items(), key=lambda x: x[1], reverse=True):
+        country_dist[cc] = {
+            "flag": COUNTRY_FLAGS.get(cc, "🌐"),
+            "count": cnt,
+            "percent": round((cnt / total_geo) * 100.0, 1)
+        }
 
     analytics_summary = {
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -779,11 +980,15 @@ def main():
         "total_duplicates_dropped": duplicate_count,
         "mihomo_compatible_count": mihomo_compat_count,
         "mihomo_compatibility_percent": round((mihomo_compat_count / len(valid_nodes)) * 100.0, 2) if valid_nodes else 0.0,
-        "protocol_breakdown": proto_counts,
-        "feature_breakdown": feature_counts,
+        "protocol_breakdown": pure_protocols,
+        "transports": transports_map,
+        "security": security_map,
+        "containers": container_stats,
+        "per_source_map": per_source_map,
+        "country_distribution": country_dist,
         "test_batch_size": len(test_batch),
         "survivors_count": len(survivors),
-        "top_sources": ranked_sources[:10]
+        "top_sources": ranked_sources[:15]
     }
 
     # Save JSON analytics
@@ -793,128 +998,39 @@ def main():
         json.dump(analytics_summary, f, indent=2, ensure_ascii=False)
     print(f"   💾 Saved Analytics Report to: {json_path}")
 
-    # 6. Generate Clash Provider & Full Config YAML
-    print(f"\n📦 Exporting Clash / Mihomo Outputs...")
-    
-    # Provider YAML
+    # 6. Generate Multi-Format Exports (Clash, Sing-box, Xray)
+    print(f"\n📦 Exporting Multi-Format Standard Configurations...")
     export_nodes = survivors if survivors else valid_nodes[:100]
-    clash_proxies = []
+    export_result = export_all_formats(export_nodes, export_cfg=settings.get("output_filters"))
 
-    for n in export_nodes:
-        flag = n.flag_emoji
-        cc = n.country_code
-        display_name = f"{flag} {cc} | {n.protocol.upper()} | {n.score:.1f}★ | {n.server}:{n.port}"
-        
-        p_dict = {
-            "name": display_name,
-            "type": n.protocol,
-            "server": n.server,
-            "port": n.port,
-            "udp": True
-        }
-
-        if n.protocol == "openvpn":
-            p_dict["proto"] = n.params.get("proto", "udp")
-            if n.params.get("username"): p_dict["username"] = n.params["username"]
-            if n.params.get("password"): p_dict["password"] = n.params["password"]
-            if n.params.get("ca"): p_dict["ca"] = n.params["ca"]
-            if n.params.get("cipher"): p_dict["cipher"] = n.params["cipher"]
-            if n.params.get("auth"): p_dict["auth"] = n.params["auth"]
-            p_dict["udp"] = (p_dict["proto"] == "udp")
-        elif n.protocol == "vless":
-            p_dict["uuid"] = n.params.get("uuid", "")
-            p_dict["network"] = n.params.get("network", "tcp")
-            if n.params.get("security") == "reality":
-                p_dict["tls"] = True
-                p_dict["servername"] = n.params.get("sni", "")
-                p_dict["reality-opts"] = {
-                    "public-key": n.params.get("public_key", ""),
-                    "short-id": n.params.get("short_id", "")
-                }
-                p_dict["client-fingerprint"] = "chrome"
-            elif n.params.get("security") == "tls":
-                p_dict["tls"] = True
-                p_dict["servername"] = n.params.get("sni", "")
-        elif n.protocol == "vmess":
-            p_dict["uuid"] = n.params.get("uuid", "")
-            p_dict["alterId"] = 0
-            p_dict["cipher"] = "auto"
-            p_dict["network"] = n.params.get("network", "tcp")
-            if n.params.get("security") == "tls":
-                p_dict["tls"] = True
-                p_dict["servername"] = n.params.get("sni", "")
-        elif n.protocol == "trojan":
-            p_dict["password"] = n.params.get("password", "")
-            p_dict["tls"] = True
-            p_dict["sni"] = n.params.get("sni", "")
-        elif n.protocol in ["hysteria2", "hy2"]:
-            p_dict["type"] = "hysteria2"
-            p_dict["password"] = n.params.get("password", "")
-            p_dict["sni"] = n.params.get("sni", "")
-        elif n.protocol == "tuic":
-            p_dict["uuid"] = n.params.get("uuid", "")
-            p_dict["password"] = n.params.get("password", "")
-            p_dict["congestion-controller"] = "bbr"
-        elif n.protocol == "wireguard":
-            p_dict["ip"] = "172.16.0.2/32"
-            p_dict["public-key"] = n.params.get("public_key", "")
-            p_dict["private-key"] = n.params.get("private_key", "")
-
-        clash_proxies.append(p_dict)
-
-    provider_yaml_path = os.path.join(OUTPUT_DIR, "clash_provider.yaml")
-    with open(provider_yaml_path, 'w', encoding='utf-8') as f:
-        yaml.dump({"proxies": clash_proxies}, f, allow_unicode=True, sort_keys=False)
-    print(f"   💾 Saved Clash Provider YAML to: {provider_yaml_path} ({len(clash_proxies)} proxies)")
-
-    # Full Clash Config with Persian Proxy Groups
-    proxy_names = [p["name"] for p in clash_proxies]
-    if not proxy_names:
-        proxy_names = ["DIRECT"]
-
-    persian_groups = [
-        {"name": "🚀 انتخاب خودکار (کمترین پینگ)", "type": "url-test", "proxies": proxy_names, "url": "http://cp.cloudflare.com/generate_204", "interval": 180, "tolerance": 50},
-        {"name": "⚖️ تعادل بار (Load Balance)", "type": "load-balance", "proxies": proxy_names, "url": "http://cp.cloudflare.com/generate_204", "interval": 300, "strategy": "consistent-hashing"},
-        {"name": "🔰 دستی / انتخاب پروکسی", "type": "select", "proxies": ["🚀 انتخاب خودکار (کمترین پینگ)", "⚖️ تعادل بار (Load Balance)"] + proxy_names + ["DIRECT"]},
-        {"name": "🤖 هوش مصنوعی (جمنای / ChatGPT)", "type": "select", "proxies": ["🚀 انتخاب خودکار (کمترین پینگ)"] + proxy_names},
-        {"name": "📺 یوتیوب و استریم", "type": "select", "proxies": ["🚀 انتخاب خودکار (کمترین پینگ)"] + proxy_names},
-        {"name": "✈️ تلگرام", "type": "select", "proxies": ["🚀 انتخاب خودکار (کمترین پینگ)"] + proxy_names},
-        {"name": "🛡️ سایت‌های ایرانی (دایرکت)", "type": "select", "proxies": ["DIRECT", "🔰 دستی / انتخاب پروکسی"]},
-        {"name": "🐟 نشت ترافیک و سایر", "type": "select", "proxies": ["🔰 دستی / انتخاب پروکسی", "DIRECT"]}
-    ]
-
-    full_clash = {
-        "mixed-port": 7890,
-        "allow-lan": False,
-        "mode": "rule",
-        "log-level": "info",
-        "ipv6": False,
-        "dns": {
-            "enable": True,
-            "enhanced-mode": "fake-ip",
-            "fake-ip-range": "198.18.0.1/16",
-            "default-nameserver": ["1.1.1.1", "8.8.8.8"],
-            "nameserver": ["https://dns.cloudflare.com/dns-query", "https://dns.google/dns-query"]
-        },
-        "proxies": clash_proxies,
-        "proxy-groups": persian_groups,
-        "rules": [
-            "DOMAIN-SUFFIX,gemini.google.com,🤖 هوش مصنوعی (جمنای / ChatGPT)",
-            "DOMAIN-SUFFIX,generativelanguage.googleapis.com,🤖 هوش مصنوعی (جمنای / ChatGPT)",
-            "DOMAIN-SUFFIX,openai.com,🤖 هوش مصنوعی (جمنای / ChatGPT)",
-            "DOMAIN-SUFFIX,youtube.com,📺 یوتیوب و استریم",
-            "DOMAIN-SUFFIX,googlevideo.com,📺 یوتیوب و استریم",
-            "DOMAIN-SUFFIX,t.me,✈️ تلگرام",
-            "DOMAIN-SUFFIX,telegram.org,✈️ تلگرام",
-            "GEOIP,IR,🛡️ سایت‌های ایرانی (دایرکت)",
-            "MATCH,🐟 نشت ترافیک و سایر"
-        ]
-    }
-
-    full_yaml_path = os.path.join(OUTPUT_DIR, "clash_full.yaml")
-    with open(full_yaml_path, 'w', encoding='utf-8') as f:
-        yaml.dump(full_clash, f, allow_unicode=True, sort_keys=False)
-    print(f"   💾 Saved Full Clash Config YAML to: {full_yaml_path}")
+    # 7. Telegram Bot Auto-Sender Dispatch
+    tg_cfg = settings.get("telegram_sender", {})
+    if tg_cfg.get("enabled", False):
+        tg_token = tg_cfg.get("bot_token", "").strip()
+        tg_chat = tg_cfg.get("channel_id", "").strip()
+        tg_caption = tg_cfg.get("caption", "💎 Freedom Config Collector v2")
+        if tg_token and tg_chat:
+            print(f"\n✈️ Dispatching to Telegram Channel: {tg_chat}...")
+            try:
+                if tg_cfg.get("send_summary", True):
+                    summary_msg = (
+                        f"🚀 <b>Freedom Config Collector v2</b>\n\n"
+                        f"📊 <b>گزارش استخراج و تست هوشمند:</b>\n"
+                        f"• کل منابع اسکن‌شده: {len(source_stats)}\n"
+                        f"• کل کانفیگ‌های بررسی‌شده: {len(all_nodes)}\n"
+                        f"• کانفیگ‌های سالم: {len(survivors)}\n"
+                        f"• کانفیگ‌های تایید نهایی خروجی: {export_result.get('count', len(survivors))}\n\n"
+                        f"⚡ <i>آماده اتصال در کلش، سینگ‌باکس و v2ray</i>"
+                    )
+                    send_telegram_message(tg_token, tg_chat, summary_msg, opener=net_opener)
+                
+                if tg_cfg.get("send_files", True):
+                    for fpath in [export_result.get("clash_provider"), export_result.get("singbox_outbounds"), export_result.get("xray_raw")]:
+                        if fpath and os.path.exists(fpath):
+                            send_telegram_document(tg_token, tg_chat, fpath, caption=tg_caption, opener=net_opener)
+                print("   ✅ Telegram Auto-Dispatch Successful!")
+            except Exception as e:
+                print(f"   ⚠️ Telegram Auto-Dispatch Failed: {e}")
 
     # Generate Markdown Summary
     md_summary_path = os.path.join(OUTPUT_DIR, "analytics_summary.md")
@@ -932,16 +1048,16 @@ def main():
         f.write("## 🧬 تفکیک پروتکل‌ها\n\n")
         f.write("| پروتکل | تعداد شناسایی‌شده | سهم درصدی |\n")
         f.write("| :--- | :--- | :--- |\n")
-        for proto, count in sorted(proto_counts.items(), key=lambda x: x[1], reverse=True):
+        for proto, count in sorted(pure_protocols.items(), key=lambda x: x[1], reverse=True):
             pct = round((count / len(valid_nodes)) * 100.0, 1) if valid_nodes else 0
             f.write(f"| **{proto.upper()}** | {count} | {pct}% |\n")
 
         f.write("\n## 🛡️ خصوصیات پیشرفته شناسایی‌شده\n\n")
-        f.write(f"- **VLESS Reality:** `{feature_counts['reality']}`\n")
-        f.write(f"- **WebSocket (WS):** `{feature_counts['ws']}`\n")
-        f.write(f"- **gRPC Transport:** `{feature_counts['grpc']}`\n")
-        f.write(f"- **TLS Camouflage:** `{feature_counts['tls']}`\n")
-        f.write(f"- **UDP Supported:** `{feature_counts['udp']}`\n\n")
+        f.write(f"- **VLESS Reality:** `{security_map.get('reality', 0)}`\n")
+        f.write(f"- **WebSocket (WS):** `{transports_map.get('ws', 0)}`\n")
+        f.write(f"- **gRPC Transport:** `{transports_map.get('grpc', 0)}`\n")
+        f.write(f"- **TLS Camouflage:** `{security_map.get('tls', 0)}`\n")
+        f.write(f"- **UDP Supported:** `{sum(1 for n in survivors if getattr(n, 'udp_supported', False))}`\n\n")
 
         f.write("## 🏆 برترین منابع (رتبه‌بندی کیفی و پایداری)\n\n")
         f.write("| رتبه | نام منبع | نوع | تعداد کل | زنده | درصد موفقیت | میانگین پینگ |\n")

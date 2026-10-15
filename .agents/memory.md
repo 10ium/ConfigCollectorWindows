@@ -78,4 +78,25 @@
 - **Source Management**: Added full interactive source mode switcher (`all`, `folder`, `subscriptions`, `telegram`), Telegram channel list editor, and subscription URL editor.
 - **Expiry Detection Fix**: Integrated `checkExpiration(decResult)` from `cf_decryptor_bot` directly into `tools/decryptor_bridge.mjs`, correctly identifying and filtering the 55 expired container files.
 
-
+## V2 Advanced Feature Expansion & Automation
+- **Deep Gemini AI Probe (Inspired by Gemini-Config-Checker)**:
+  - Level 1: Network reachability probe (`generativelanguage.googleapis.com`). HTTP 400 with dummy key proves server is reachable.
+  - Level 2: Web Application & Regional Block Detection (`gemini.google.com/app` and `aistudio.google.com/prompts/new_chat`). Detects `"available-region"`, `"currently supported in your country"`, or 403/451 status.
+  - Level 3: Live API Key generation call (`gemini-2.5-flash:generateContent`).
+- **Multi-Format Structured Exporter**:
+  - Organized outputs into dedicated folders: `output/clash/` (Proxy Provider YAML & Full 32-Group Config), `output/singbox/` (Outbounds JSON & Standalone config), `output/xray/` (Raw URI links & Base64 Subscription).
+  - Maintained root aliases in `output/` for legacy and 1-click download compatibility.
+- **Output Customization & Per-Protocol Caps**:
+  - Configurable minimum score (`min_score`), Gemini-only toggle (`only_gemini_passed`), per-protocol maximum caps (`per_protocol_limits`: VLESS, VMess, Trojan, Shadowsocks, Hysteria2, TUIC, OpenVPN, WireGuard).
+  - Sent History deduplication memory (`config/sent_history.json`) prevents reposting previously discovered configs across cycles.
+- **Telegram Bot Auto-Sender**:
+  - Direct integration with Telegram Bot API (`sendDocument` with multipart boundary and `sendMessage` with HTML formatting).
+  - Supports automatic channel dispatching after test completion, with a live token test endpoint (`/api/test_telegram`).
+- **Multi-Round Testing (Interval Testing with Cooldown)**:
+  - Runs tests across rounds (`rounds_count`) with a configurable resting cooldown (`interval_between_rounds_sec`) to avoid dropping healthy configs during momentary network fluctuations.
+  - Proxy qualifies if it passes `>= min_passed_rounds`.
+- **Windows System Tray & Background Execution**:
+  - Native Windows Forms `NotifyIcon` helper script (`tools/tray_helper.ps1`) runs without third-party python modules like `pystray`.
+  - Provides quick tray context menu: Open Dashboard, Run Now, Exit.
+- **Standalone Binary Packaging**:
+  - Single-file standalone executable (`FreedomConfigCollector.exe`, 8.3MB) compiled with PyInstaller 6.22, embedding modern multi-resolution icons (`app_icon.ico`) and hidden imports.
