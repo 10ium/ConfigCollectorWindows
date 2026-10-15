@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/10ium/freedom-config-collector/engine/internal/model"
 )

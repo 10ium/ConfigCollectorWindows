@@ -28,6 +28,7 @@ type Node struct {
 	Fingerprint string   `json:"fingerprint,omitempty"` // utls fingerprint: chrome, firefox, safari, randomized, etc.
 	ALPN        []string `json:"alpn,omitempty"`
 	Insecure    bool     `json:"insecure,omitempty"`
+	UDP         bool     `json:"udp,omitempty"`
 
 	// Reality specific
 	PublicKey string `json:"public_key,omitempty"`
