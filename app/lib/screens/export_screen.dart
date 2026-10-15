@@ -51,10 +51,10 @@ class _ExportScreenState extends State<ExportScreen> {
   void _saveFilters() {
     final isPersian = Localizations.localeOf(context).languageCode == 'fa';
 
-    _config.updateNestedSetting('output_filters', 'min_score', _minScore);
-    _config.updateNestedSetting('output_filters', 'only_gemini_passed', _onlyGemini);
-    _config.updateNestedSetting('output_filters', 'filter_previously_sent', _filterPreviouslySent);
-    _config.updateNestedSetting('output_filters', 'per_protocol_limits', {
+    _config.updateSetting('output_filters', 'min_score', _minScore);
+    _config.updateSetting('output_filters', 'only_gemini_passed', _onlyGemini);
+    _config.updateSetting('output_filters', 'filter_previously_sent', _filterPreviouslySent);
+    _config.updateSetting('output_filters', 'per_protocol_limits', {
       'vless': _vlessCap,
       'hysteria2': _hy2Cap,
       'trojan': _trojanCap,

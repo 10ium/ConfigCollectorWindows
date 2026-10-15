@@ -114,8 +114,8 @@ class _TesterScreenState extends State<TesterScreen> {
     _config.updateNestedSetting('tests', 'download_speed', 'enabled', _t6SpeedDown);
     _config.updateNestedSetting('tests', 'download_speed', 'test_url', _customSpeedCtrl.text.trim());
 
-    _config.updateNestedSetting('testing_rounds', 'rounds_count', _roundsCount);
-    _config.updateNestedSetting('testing_rounds', 'interval_between_rounds_sec', _intervalBetweenRoundsSec);
+    _config.updateSetting('testing_rounds', 'rounds_count', _roundsCount);
+    _config.updateSetting('testing_rounds', 'interval_between_rounds_sec', _intervalBetweenRoundsSec);
 
     _config.updateNestedSetting('tests', 'geo_flag', 'enabled', _t2Geo);
     _config.updateNestedSetting('tests', 'udp', 'enabled', _t7UDP);

@@ -90,18 +90,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
   void _saveSettings() {
     final isPersian = Localizations.localeOf(context).languageCode == 'fa';
 
-    _config.updateNestedSetting('network', 'mode', _systemProxyEnabled ? 'system_proxy' : 'direct');
-    _config.updateNestedSetting('network', 'proxy_host', _proxyHostCtrl.text.trim());
-    _config.updateNestedSetting('network', 'proxy_port', int.tryParse(_proxyPortCtrl.text.trim()) ?? 7890);
+    _config.updateSetting('network', 'mode', _systemProxyEnabled ? 'system_proxy' : 'direct');
+    _config.updateSetting('network', 'proxy_host', _proxyHostCtrl.text.trim());
+    _config.updateSetting('network', 'proxy_port', int.tryParse(_proxyPortCtrl.text.trim()) ?? 7890);
 
-    _config.updateNestedSetting('telegram_sender', 'enabled', _telegramBotEnabled);
-    _config.updateNestedSetting('telegram_sender', 'bot_token', _botTokenCtrl.text.trim());
-    _config.updateNestedSetting('telegram_sender', 'channel_id', _channelIdCtrl.text.trim());
-    _config.updateNestedSetting('telegram_sender', 'send_files', _sendFiles);
-    _config.updateNestedSetting('telegram_sender', 'send_summary', _sendSummary);
+    _config.updateSetting('telegram_sender', 'enabled', _telegramBotEnabled);
+    _config.updateSetting('telegram_sender', 'bot_token', _botTokenCtrl.text.trim());
+    _config.updateSetting('telegram_sender', 'channel_id', _channelIdCtrl.text.trim());
+    _config.updateSetting('telegram_sender', 'send_files', _sendFiles);
+    _config.updateSetting('telegram_sender', 'send_summary', _sendSummary);
 
-    _config.updateNestedSetting('output_filters', 'filter_previously_sent', _dedupEnabled);
-    _config.updateNestedSetting('core_manager', 'preferred_arch', _preferredArch);
+    _config.updateSetting('output_filters', 'filter_previously_sent', _dedupEnabled);
+    _config.updateSetting('core_manager', 'preferred_arch', _preferredArch);
 
     _config.saveSettings();
 
