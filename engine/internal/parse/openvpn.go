@@ -13,7 +13,7 @@ import (
 )
 
 var (
-	tagRegex       = regexp.MustCompile(`(?s)<([a-zA-Z0-9_\-]+)>\s*(.*?)\s*</\1>`)
+	tagRegex       = regexp.MustCompile(`(?s)<([a-zA-Z0-9_\-]+)>\s*(.*?)\s*</([a-zA-Z0-9_\-]+)>`)
 	remoteRegex    = regexp.MustCompile(`(?i)^\s*remote\s+([^\s]+)\s+([0-9]+)(?:\s+([a-zA-Z0-9]+))?`)
 	protoRegex     = regexp.MustCompile(`(?i)^\s*proto\s+([a-zA-Z0-9]+)`)
 	cipherRegex    = regexp.MustCompile(`(?i)^\s*(?:cipher|data-ciphers)\s+([^\s]+)`)
@@ -25,7 +25,7 @@ var (
 func ParseOpenVPN(content, sourceURI string) []*model.Node {
 	tags := make(map[string]string)
 	for _, match := range tagRegex.FindAllStringSubmatch(content, -1) {
-		if len(match) == 3 {
+		if len(match) == 4 && strings.EqualFold(match[1], match[3]) {
 			tagName := strings.ToLower(match[1])
 			tagContent := strings.TrimSpace(match[2])
 			tags[tagName] = tagContent
