@@ -1,15 +1,25 @@
 package parse
 
 import (
+	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/10ium/freedom-config-collector/engine/internal/model"
 )
 
 var (
-	allSchemesRegex = BuildSchemesRegex()
+	allSchemesRegex *regexp.Regexp
+	schemesOnce     sync.Once
 )
+
+func getSchemesRegex() *regexp.Regexp {
+	schemesOnce.Do(func() {
+		allSchemesRegex = BuildSchemesRegex()
+	})
+	return allSchemesRegex
+}
 
 // ExtractNodes parses any raw text, subscription payload, or file content.
 // It automatically detects encrypted containers (.ehi, .nm, .hat, .dark, .ssc, .npv),
@@ -95,9 +105,9 @@ func ExtractNodes(rawContent, sourceType, sourceURI string) ([]*model.Node, int)
 	unwrapped := DecodeBase64MultiLayer(cleaned)
 
 	// Step 4: Extract all 43 protocol URI schemes
-	matches := allSchemesRegex.FindAllString(unwrapped, -1)
+	matches := getSchemesRegex().FindAllString(unwrapped, -1)
 	if len(matches) == 0 && unwrapped != cleaned {
-		matches = allSchemesRegex.FindAllString(cleaned, -1)
+		matches = getSchemesRegex().FindAllString(cleaned, -1)
 	}
 
 	var rawNodes []*model.Node

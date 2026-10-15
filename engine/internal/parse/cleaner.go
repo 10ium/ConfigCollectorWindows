@@ -8,8 +8,8 @@ import (
 )
 
 var (
-	// Regex matching control characters, non-printable characters, zero-width spaces, and replacement chars.
-	controlCharRegex = regexp.MustCompile(`[\x00-\x1F\x7F-\x9F\x{200B}-\x{200D}\x{FEFF}\x{FFFD}]`)
+	// Regex matching control characters (preserving \t \n \r), non-printable characters, zero-width spaces, and replacement chars.
+	controlCharRegex = regexp.MustCompile(`[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F\x{200B}-\x{200D}\x{FEFF}\x{FFFD}]`)
 )
 
 // CleanText removes invisible unicode artifacts and decodes HTML entities.
