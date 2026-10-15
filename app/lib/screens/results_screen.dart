@@ -133,7 +133,7 @@ class ResultsScreen extends StatelessWidget {
                       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                       decoration: BoxDecoration(
                         color: Colors.green.shade50,
-                        border: Border.Border.all(color: Colors.green),
+                        border: Border.all(color: Colors.green),
                         borderRadius: BorderRadius.circular(4),
                       ),
                       child: const Text('UDP', style: TextStyle(fontSize: 10, color: Colors.green, fontWeight: FontWeight.bold)),

@@ -40,6 +40,9 @@ jobs:
         with:
           go-version: '1.22'
 
+      - name: Setup MSVC Environment
+        uses: ilammy/msvc-dev-cmd@v1
+
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
@@ -58,6 +61,7 @@ jobs:
         working-directory: app
         shell: pwsh
         run: |
+          flutter config --enable-windows-desktop
           flutter create . --platforms=windows,android --org com.freedom
           flutter pub get
           flutter build windows --release
