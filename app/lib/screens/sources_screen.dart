@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../services/config_service.dart';
 
 class SourcesScreen extends StatefulWidget {
   const SourcesScreen({super.key});
@@ -8,28 +9,84 @@ class SourcesScreen extends StatefulWidget {
 }
 
 class _SourcesScreenState extends State<SourcesScreen> {
+  final ConfigService _config = ConfigService();
+
+  late TextEditingController _channelsCtrl;
+  late TextEditingController _providersCtrl;
+  late TextEditingController _folderCtrl;
+
   bool _telegramEnabled = true;
-  bool _subscriptionsEnabled = true;
+  bool _providersEnabled = true;
   bool _localFolderEnabled = false;
 
-  final TextEditingController _channelsCtrl = TextEditingController(
-    text: '@V2ray20261\n@MatinSenPaii\n@Config724\n@PewezaVPN\n@AzadNet\n@DirectVPN',
-  );
+  @override
+  void initState() {
+    super.initState();
+    _channelsCtrl = TextEditingController();
+    _providersCtrl = TextEditingController();
+    _folderCtrl = TextEditingController();
+    _loadFromConfig();
+  }
 
-  final TextEditingController _subsCtrl = TextEditingController(
-    text: 'https://raw.githubusercontent.com/10Dream/VpnClashFaCollector/refs/heads/main/sub/all/mixed.txt\nhttps://raw.githubusercontent.com/mahsanet/MahsaFreeConfig/refs/heads/main/mci/sub_1.txt',
-  );
+  void _loadFromConfig() {
+    final s = _config.settings['sources'] ?? {};
+    final tg = s['telegram'] ?? {};
+    final sub = s['subscriptions'] ?? {};
+    final loc = s['local_folder'] ?? {};
 
-  final TextEditingController _folderCtrl = TextEditingController(
-    text: 'C:\\Configs',
-  );
+    _telegramEnabled = tg['enabled'] ?? true;
+    _providersEnabled = sub['enabled'] ?? true;
+    _localFolderEnabled = loc['enabled'] ?? false;
+
+    final channels = (tg['channels'] as List?)?.join('\n') ?? '';
+    final urls = (sub['urls'] as List?)?.join('\n') ?? '';
+    final path = loc['path'] ?? 'G:\\Ai project\\10Dream\\decryptor\\file for test';
+
+    _channelsCtrl.text = channels;
+    _providersCtrl.text = urls;
+    _folderCtrl.text = path;
+  }
 
   @override
   void dispose() {
     _channelsCtrl.dispose();
-    _subsCtrl.dispose();
+    _providersCtrl.dispose();
     _folderCtrl.dispose();
     super.dispose();
+  }
+
+  void _saveSources() {
+    final isPersian = Localizations.localeOf(context).languageCode == 'fa';
+
+    final channelsList = _channelsCtrl.text
+        .split('\n')
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
+
+    final urlsList = _providersCtrl.text
+        .split('\n')
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
+
+    _config.updateNestedSetting('sources', 'telegram', 'enabled', _telegramEnabled);
+    _config.updateNestedSetting('sources', 'telegram', 'channels', channelsList);
+
+    _config.updateNestedSetting('sources', 'subscriptions', 'enabled', _providersEnabled);
+    _config.updateNestedSetting('sources', 'subscriptions', 'urls', urlsList);
+
+    _config.updateNestedSetting('sources', 'local_folder', 'enabled', _localFolderEnabled);
+    _config.updateNestedSetting('sources', 'local_folder', 'path', _folderCtrl.text.trim());
+
+    _config.saveSettings();
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(isPersian ? 'منابع با موفقیت ذخیره شدند.' : 'Sources saved successfully.'),
+        backgroundColor: Colors.green,
+      ),
+    );
   }
 
   @override
@@ -38,12 +95,20 @@ class _SourcesScreenState extends State<SourcesScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(isPersian ? 'منابع ورودی جمع‌آوری' : 'Input Sources Management'),
+        title: Text(isPersian ? 'مدیریت منابع استخراج' : 'Input Sources Management'),
+        actions: [
+          FilledButton.icon(
+            onPressed: _saveSources,
+            icon: const Icon(Icons.save),
+            label: Text(isPersian ? 'ذخیره تغییرات' : 'Save Changes'),
+          ),
+          const SizedBox(width: 16),
+        ],
       ),
       body: ListView(
         padding: const EdgeInsets.all(24.0),
         children: [
-          // Info banner
+          // Banner
           Card(
             color: Colors.blue.shade50,
             child: Padding(
@@ -55,8 +120,8 @@ class _SourcesScreenState extends State<SourcesScreen> {
                   Expanded(
                     child: Text(
                       isPersian
-                          ? 'هر سه منبع ورودی کاملاً مستقل هستند. می‌توانید هر یک از آن‌ها را به تنهایی یا چند مورد را همزمان فعال کنید.'
-                          : 'All three sources are fully independent. You can activate any single source or any combination simultaneously.',
+                          ? 'نام این بخش طبق استاندارد به «پروکسی پروایدر» (Proxy Provider) به‌روزرسانی شد. می‌توانید لینک‌های اشتراک و کانال‌های تلگرام را در هر سطر جداگانه وارد کنید.'
+                          : 'Sources updated to "Proxy Provider". Enter subscription links and Telegram channels one per line.',
                       style: const TextStyle(color: Colors.blue),
                     ),
                   ),
@@ -66,39 +131,107 @@ class _SourcesScreenState extends State<SourcesScreen> {
           ),
           const SizedBox(height: 16),
 
-          // Source 1: Telegram Channels
+          // Source 1: Proxy Providers (formerly Subscriptions)
           Card(
             child: Padding(
               padding: const EdgeInsets.all(20.0),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  SwitchListTile(
-                    title: Text(
-                      isPersian ? 'کانال‌های تلگرام (صفحات عمومی وب)' : 'Telegram Channels (Public Web)',
-                      style: const TextStyle(fontWeight: FontWeight.bold),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(Icons.hub, color: Colors.indigo, size: 28),
+                          const SizedBox(width: 12),
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                isPersian ? 'پروکسی پروایدرها (Proxy Providers)' : 'Proxy Providers (Subscriptions)',
+                                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                              ),
+                              Text(
+                                isPersian
+                                    ? 'لینک‌های سابسکریپشن کلش و فایل‌های آنلاین متنی یا YAML'
+                                    : 'Clash subscription URLs & online text/yaml files',
+                                style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                      Switch(
+                        value: _providersEnabled,
+                        onChanged: (v) => setState(() => _providersEnabled = v),
+                      ),
+                    ],
+                  ),
+                  if (_providersEnabled) ...[
+                    const Divider(height: 24),
+                    TextField(
+                      controller: _providersCtrl,
+                      maxLines: 5,
+                      decoration: InputDecoration(
+                        border: const OutlineInputBorder(),
+                        hintText: 'https://example.com/sub/all.yaml\nhttps://example.com/sub2.txt',
+                        labelText: isPersian ? 'آدرس لینک‌های پروکسی پروایدر (هر خط یک آدرس)' : 'Proxy Provider URLs (One per line)',
+                      ),
                     ),
-                    subtitle: Text(
-                      isPersian ? 'استخراج بدون نیاز به پروکسی یا توکن ربات' : 'Scrape public t.me/s pages without token',
-                    ),
-                    value: _telegramEnabled,
-                    onChanged: (val) => setState(() => _telegramEnabled = val),
+                  ],
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // Source 2: Telegram Channels
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(20.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(Icons.telegram, color: Colors.blue, size: 28),
+                          const SizedBox(width: 12),
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                isPersian ? 'کانال‌های تلگرام (Telegram Channels)' : 'Telegram Channels',
+                                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                              ),
+                              Text(
+                                isPersian
+                                    ? 'استخراج خودکار آخرین کانفیگ‌های منتشرشده در پیام‌های کانال‌ها'
+                                    : 'Auto-scrape proxy configs from public channel posts',
+                                style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                      Switch(
+                        value: _telegramEnabled,
+                        onChanged: (v) => setState(() => _telegramEnabled = v),
+                      ),
+                    ],
                   ),
                   if (_telegramEnabled) ...[
-                    const Divider(),
-                    const SizedBox(height: 8),
-                    Text(
-                      isPersian ? 'آیدی کانال‌ها (در هر خط یک کانال):' : 'Channel Usernames (one per line):',
-                      style: Theme.of(context).textTheme.bodyMedium,
-                    ),
-                    const SizedBox(height: 8),
+                    const Divider(height: 24),
                     TextField(
                       controller: _channelsCtrl,
                       maxLines: 5,
-                      textDirection: TextDirection.ltr,
-                      decoration: const InputDecoration(
-                        border: OutlineInputBorder(),
-                        hintText: '@ChannelName',
+                      decoration: InputDecoration(
+                        border: const OutlineInputBorder(),
+                        hintText: '@Channel1\n@Channel2\nhttps://t.me/s/Channel3',
+                        labelText: isPersian ? 'آیدی یا لینک کانال‌ها (هر خط یک کانال)' : 'Channel IDs or Links (One per line)',
                       ),
                     ),
                   ],
@@ -108,88 +241,52 @@ class _SourcesScreenState extends State<SourcesScreen> {
           ),
           const SizedBox(height: 16),
 
-          // Source 2: Subscription Links
+          // Source 3: Local Folder
           Card(
             child: Padding(
               padding: const EdgeInsets.all(20.0),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  SwitchListTile(
-                    title: Text(
-                      isPersian ? 'لینک‌های اشتراک (Subscription URLs)' : 'Subscription URLs',
-                      style: const TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                    subtitle: Text(
-                      isPersian ? 'پشتیبانی خودکار از فرمت‌های Base64، سابسکریپشن کلش و متنی' : 'Auto Base64 unwrapping, Clash YAML & plaintext',
-                    ),
-                    value: _subscriptionsEnabled,
-                    onChanged: (val) => setState(() => _subscriptionsEnabled = val),
-                  ),
-                  if (_subscriptionsEnabled) ...[
-                    const Divider(),
-                    const SizedBox(height: 8),
-                    Text(
-                      isPersian ? 'لینک‌های اشتراک (در هر خط یک لینک):' : 'Subscription URLs (one per line):',
-                      style: Theme.of(context).textTheme.bodyMedium,
-                    ),
-                    const SizedBox(height: 8),
-                    TextField(
-                      controller: _subsCtrl,
-                      maxLines: 4,
-                      textDirection: TextDirection.ltr,
-                      decoration: const InputDecoration(
-                        border: OutlineInputBorder(),
-                        hintText: 'https://...',
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(Icons.folder_open, color: Colors.amber, size: 28),
+                          const SizedBox(width: 12),
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                isPersian ? 'پوشه فایل‌های محلی (Local Folder)' : 'Local File Directory',
+                                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                              ),
+                              Text(
+                                isPersian
+                                    ? 'اسکن خودکار انواع فرمت‌ها (.ovpn, .ehi, .nm, .hat, .dark, .ssc, .txt, .yaml)'
+                                    : 'Auto-scan files (.ovpn, .ehi, .nm, .hat, .dark, .ssc, .txt, .yaml)',
+                                style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
+                              ),
+                            ],
+                          ),
+                        ],
                       ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-
-          // Source 3: Local Text Folder
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(20.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  SwitchListTile(
-                    title: Text(
-                      isPersian ? 'پوشه فایل‌های متنی روی سیستم' : 'Local Text Folder',
-                      style: const TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                    subtitle: Text(
-                      isPersian ? 'اسکن و استخراج خودکار تمام فایل‌های txt. درون پوشه' : 'Scan all .txt files inside a local directory',
-                    ),
-                    value: _localFolderEnabled,
-                    onChanged: (val) => setState(() => _localFolderEnabled = val),
+                      Switch(
+                        value: _localFolderEnabled,
+                        onChanged: (v) => setState(() => _localFolderEnabled = v),
+                      ),
+                    ],
                   ),
                   if (_localFolderEnabled) ...[
-                    const Divider(),
-                    const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: TextField(
-                            controller: _folderCtrl,
-                            textDirection: TextDirection.ltr,
-                            decoration: InputDecoration(
-                              labelText: isPersian ? 'مسیر پوشه' : 'Folder Path',
-                              border: const OutlineInputBorder(),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        FilledButton.tonalIcon(
-                          onPressed: () {},
-                          icon: const Icon(Icons.folder_open),
-                          label: Text(isPersian ? 'انتخاب' : 'Browse'),
-                        ),
-                      ],
+                    const Divider(height: 24),
+                    TextField(
+                      controller: _folderCtrl,
+                      decoration: InputDecoration(
+                        border: const OutlineInputBorder(),
+                        labelText: isPersian ? 'مسیر پوشه روی سیستم' : 'Directory Path',
+                        suffixIcon: const Icon(Icons.drive_file_move_outline),
+                      ),
                     ),
                   ],
                 ],
