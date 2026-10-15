@@ -29,7 +29,7 @@ jobs:
 
   build-windows:
     name: Build Windows Application
-    runs-on: windows-latest
+    runs-on: windows-2022
     needs: test-engine
     steps:
       - name: Checkout Code
