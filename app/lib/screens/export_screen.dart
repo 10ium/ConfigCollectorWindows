@@ -99,9 +99,9 @@ class _ExportScreenState extends State<ExportScreen> {
     _config.updateSetting('output_filters', 'per_protocol_limits', _protocolLimits);
 
     _config.updateSetting('system_tray', 'minimize_to_tray_on_close', _minimizeToTray);
-    _config.updateNestedSetting('quiet_hours', 'enabled', _quietHoursEnabled);
-    _config.updateNestedSetting('quiet_hours', 'start_time', _quietStartCtrl.text.trim());
-    _config.updateNestedSetting('quiet_hours', 'end_time', _quietEndCtrl.text.trim());
+    _config.updateSetting('quiet_hours', 'enabled', _quietHoursEnabled);
+    _config.updateSetting('quiet_hours', 'start_time', _quietStartCtrl.text.trim());
+    _config.updateSetting('quiet_hours', 'end_time', _quietEndCtrl.text.trim());
 
     _config.saveSettings();
 
