@@ -17,11 +17,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late TextEditingController _proxyHostCtrl;
   late TextEditingController _proxyPortCtrl;
 
+  // Proxy & Internet Health Check
+  bool _isCheckingProxy = false;
+  Map<String, dynamic>? _proxyHealthResult;
+
   // Telegram Bot Dispatcher
   bool _telegramBotEnabled = false;
   late TextEditingController _botTokenCtrl;
   late TextEditingController _channelIdCtrl;
   late TextEditingController _captionCtrl;
+  late TextEditingController _headerTextCtrl;
+  late TextEditingController _footerTextCtrl;
+  String _messageMode = 'both'; // 'no_text', 'header_only', 'footer_only', 'both'
   bool _sendFiles = true;
   bool _sendSummary = true;
   String _botTestStatus = '';
@@ -43,6 +50,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _botTokenCtrl = TextEditingController();
     _channelIdCtrl = TextEditingController();
     _captionCtrl = TextEditingController(text: '⚡ کانفیگ‌های تازه استخراج‌شده توسط Freedom Config Collector v2');
+    _headerTextCtrl = TextEditingController(text: '⚡ مجموعه کانفیگ‌های تاییدشده Freedom Config Collector v2');
+    _footerTextCtrl = TextEditingController(text: '🌐 ساخته‌شده با عشق برای دسترسی آزاد به اینترنت');
     _detectSystemArchitecture();
     _loadFromConfig();
   }
@@ -70,7 +79,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _telegramBotEnabled = tg['enabled'] ?? false;
     _botTokenCtrl.text = tg['bot_token'] ?? '';
     _channelIdCtrl.text = tg['channel_id'] ?? '';
-    _captionCtrl.text = tg['custom_caption'] ?? '⚡ کانفیگ‌های تازه استخراج‌شده توسط Freedom Config Collector v2';
+    _captionCtrl.text = tg['custom_caption'] ?? tg['caption'] ?? '⚡ کانفیگ‌های تازه استخراج‌شده توسط Freedom Config Collector v2';
+    _messageMode = tg['message_mode'] ?? 'both';
+    _headerTextCtrl.text = tg['header_text'] ?? '⚡ مجموعه کانفیگ‌های تاییدشده Freedom Config Collector v2';
+    _footerTextCtrl.text = tg['footer_text'] ?? '🌐 ساخته‌شده با عشق برای دسترسی آزاد به اینترنت';
     _sendFiles = tg['send_files'] ?? true;
     _sendSummary = tg['send_summary'] ?? true;
 
@@ -85,6 +97,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _botTokenCtrl.dispose();
     _channelIdCtrl.dispose();
     _captionCtrl.dispose();
+    _headerTextCtrl.dispose();
+    _footerTextCtrl.dispose();
     super.dispose();
   }
 
@@ -99,6 +113,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _config.updateSetting('telegram_sender', 'bot_token', _botTokenCtrl.text.trim());
     _config.updateSetting('telegram_sender', 'channel_id', _channelIdCtrl.text.trim());
     _config.updateSetting('telegram_sender', 'custom_caption', _captionCtrl.text.trim());
+    _config.updateSetting('telegram_sender', 'message_mode', _messageMode);
+    _config.updateSetting('telegram_sender', 'header_text', _headerTextCtrl.text.trim());
+    _config.updateSetting('telegram_sender', 'footer_text', _footerTextCtrl.text.trim());
     _config.updateSetting('telegram_sender', 'send_files', _sendFiles);
     _config.updateSetting('telegram_sender', 'send_summary', _sendSummary);
 
@@ -112,6 +129,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
         backgroundColor: Colors.green,
       ),
     );
+  }
+
+  void _testProxyConnection() async {
+    final isPersian = Localizations.localeOf(context).languageCode == 'fa';
+    setState(() {
+      _isCheckingProxy = true;
+      _proxyHealthResult = null;
+    });
+
+    final res = await _config.checkProxyHealth();
+    setState(() {
+      _isCheckingProxy = false;
+      _proxyHealthResult = res;
+    });
   }
 
   void _testBotConnection() async {
@@ -334,6 +365,81 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ],
                     ),
                   ],
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      FilledButton.tonalIcon(
+                        onPressed: _isCheckingProxy ? null : _testProxyConnection,
+                        icon: _isCheckingProxy
+                            ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                            : const Icon(Icons.network_check),
+                        label: Text(isPersian ? 'تست اتصال پروکسی و اینترنت (گوگل و تلگرام)' : 'Test Proxy & Internet Health'),
+                      ),
+                    ],
+                  ),
+                  if (_proxyHealthResult != null) ...[
+                    const SizedBox(height: 12),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.black26,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: Colors.grey.withOpacity(0.2)),
+                      ),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Row(
+                              children: [
+                                Icon(
+                                  _proxyHealthResult!['telegramOk'] == true ? Icons.check_circle : Icons.cancel,
+                                  color: _proxyHealthResult!['telegramOk'] == true ? Colors.greenAccent : Colors.redAccent,
+                                  size: 20,
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    _proxyHealthResult!['telegramOk'] == true
+                                        ? (isPersian ? 'تلگرام: متصل (${_proxyHealthResult!['telegramPing']}ms)' : 'Telegram: OK (${_proxyHealthResult!['telegramPing']}ms)')
+                                        : (isPersian ? 'تلگرام: قطع یا مسدود' : 'Telegram: Failed/Blocked'),
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.bold,
+                                      color: _proxyHealthResult!['telegramOk'] == true ? Colors.greenAccent : Colors.redAccent,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          Expanded(
+                            child: Row(
+                              children: [
+                                Icon(
+                                  _proxyHealthResult!['googleOk'] == true ? Icons.check_circle : Icons.cancel,
+                                  color: _proxyHealthResult!['googleOk'] == true ? Colors.greenAccent : Colors.redAccent,
+                                  size: 20,
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    _proxyHealthResult!['googleOk'] == true
+                                        ? (isPersian ? 'گوگل: متصل (${_proxyHealthResult!['googlePing']}ms)' : 'Google: OK (${_proxyHealthResult!['googlePing']}ms)')
+                                        : (isPersian ? 'گوگل: قطع یا مسدود' : 'Google: Failed/Blocked'),
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.bold,
+                                      color: _proxyHealthResult!['googleOk'] == true ? Colors.greenAccent : Colors.redAccent,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -404,17 +510,85 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ),
                     ),
                     const SizedBox(height: 12),
-                    // Custom Caption / Message
-                    TextField(
-                      controller: _captionCtrl,
-                      maxLines: 3,
-                      decoration: InputDecoration(
-                        border: const OutlineInputBorder(),
-                        labelText: isPersian ? 'متن و کپشن سفارشی ارسالی به همراه فایل‌ها' : 'Custom Telegram Message / Caption',
-                        hintText: isPersian ? 'متن توضیحات، آدرس کانال، تاریخ و هدر دلخواه...' : 'Custom header, footer or notes...',
-                      ),
+                    // Custom Telegram Message Structure Selection
+                    Text(
+                      isPersian ? 'نحوه و محل درج متن سفارشی در پیام ارسالی کانال:' : 'Custom Message Placement:',
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                    ),
+                    const SizedBox(height: 8),
+                    SegmentedButton<String>(
+                      segments: [
+                        ButtonSegment(
+                          value: 'no_text',
+                          label: Text(isPersian ? 'بدون متن' : 'No Text'),
+                        ),
+                        ButtonSegment(
+                          value: 'header_only',
+                          label: Text(isPersian ? 'فقط خط اول' : 'Header Only'),
+                        ),
+                        ButtonSegment(
+                          value: 'footer_only',
+                          label: Text(isPersian ? 'فقط خط آخر' : 'Footer Only'),
+                        ),
+                        ButtonSegment(
+                          value: 'both',
+                          label: Text(isPersian ? 'هردو (ابتدا و انتها)' : 'Both'),
+                        ),
+                      ],
+                      selected: {_messageMode},
+                      onSelectionChanged: (set) => setState(() => _messageMode = set.first),
                     ),
                     const SizedBox(height: 12),
+                    if (_messageMode == 'header_only' || _messageMode == 'both') ...[
+                      TextField(
+                        controller: _headerTextCtrl,
+                        maxLines: 2,
+                        decoration: InputDecoration(
+                          border: const OutlineInputBorder(),
+                          labelText: isPersian ? 'متن خط اول پیام (Header / هدر سفارشی)' : 'Header Text (First Line)',
+                          hintText: isPersian ? '⚡ مجموعه کانفیگ‌های تاییدشده...' : 'Custom header...',
+                          prefixIcon: const Icon(Icons.vertical_align_top),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                    ],
+                    if (_messageMode == 'footer_only' || _messageMode == 'both') ...[
+                      TextField(
+                        controller: _footerTextCtrl,
+                        maxLines: 2,
+                        decoration: InputDecoration(
+                          border: const OutlineInputBorder(),
+                          labelText: isPersian ? 'متن آخرین خط پیام (Footer / فوتر و امضا)' : 'Footer Text (Last Line)',
+                          hintText: isPersian ? '🌐 ساخته‌شده با عشق برای دسترسی آزاد...' : 'Custom footer...',
+                          prefixIcon: const Icon(Icons.vertical_align_bottom),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                    ],
+                    if (_messageMode == 'no_text') ...[
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: Colors.blueGrey.withOpacity(0.15),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.info_outline, size: 18, color: Colors.blueGrey),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                isPersian
+                                    ? 'فایل‌ها و گزارش آماری بدون هیچ متن یا کپشن اضافی ارسال خواهند شد.'
+                                    : 'Files and reports will be sent cleanly without custom header/footer.',
+                                style: const TextStyle(fontSize: 12),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                    ],
                     CheckboxListTile(
                       title: Text(isPersian ? 'ارسال فایل‌های خروجی (کلش، ایکس‌ری و سینگ‌باکس)' : 'Send Export Files'),
                       value: _sendFiles,

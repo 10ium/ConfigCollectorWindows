@@ -142,21 +142,42 @@ type TestResult struct {
 	Error             string    `json:"error,omitempty"`
 }
 
-// TechnicalFingerprint generates a deterministic hash representing the technical endpoint.
+// TechnicalFingerprint generates a deterministic hash representing the exact technical connection endpoint.
+// It includes all connection-critical parameters (Host, Path, SNI, Flow, Reality PBK/SID, Cipher Method,
+// Obfs, Wireguard keys, etc.) so that distinct valid nodes are never falsely discarded as duplicates.
 func (n *Node) TechnicalFingerprint() string {
-	raw := fmt.Sprintf("%s|%s|%d|%s|%s|%s|%s|%s|%s|%s|%s|%s",
-		strings.ToLower(n.Protocol),
-		strings.ToLower(n.Server),
+	raw := fmt.Sprintf(
+		"%s|%s|%d|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s",
+		strings.ToLower(strings.TrimSpace(n.Protocol)),
+		strings.ToLower(strings.TrimSpace(n.Server)),
 		n.Port,
-		n.UUID,
-		n.Password,
-		strings.ToLower(n.Network),
-		strings.ToLower(n.SNI),
-		n.Path,
-		n.PublicKey,
-		n.ShortID,
-		n.Domain,
-		n.PrivateKey,
+		strings.TrimSpace(n.UUID),
+		strings.TrimSpace(n.Password),
+		strings.ToLower(strings.TrimSpace(n.Method)),
+		strings.ToLower(strings.TrimSpace(n.Security)),
+		strings.ToLower(strings.TrimSpace(n.Flow)),
+		strings.ToLower(strings.TrimSpace(n.Network)),
+		strings.TrimSpace(n.Path),
+		strings.ToLower(strings.TrimSpace(n.Host)),
+		strings.TrimSpace(n.ServiceName),
+		strings.ToLower(strings.TrimSpace(n.SNI)),
+		strings.ToLower(strings.TrimSpace(n.Fingerprint)),
+		strings.Join(n.ALPN, ","),
+		strings.TrimSpace(n.PublicKey),
+		strings.TrimSpace(n.ShortID),
+		strings.TrimSpace(n.SpiderX),
+		strings.TrimSpace(n.AuthStr),
+		strings.TrimSpace(n.Obfs),
+		strings.TrimSpace(n.ObfsPassword),
+		strings.ToLower(strings.TrimSpace(n.CongestionControl)),
+		strings.ToLower(strings.TrimSpace(n.UDPRelayMode)),
+		strings.TrimSpace(n.PrivateKey),
+		strings.TrimSpace(n.PresharedKey),
+		strings.TrimSpace(n.PSK),
+		strings.TrimSpace(n.Version),
+		strings.TrimSpace(n.Username),
+		strings.TrimSpace(n.Domain),
+		strings.TrimSpace(n.DNSTTPubKey),
 	)
 	hasher := md5.New()
 	hasher.Write([]byte(raw))

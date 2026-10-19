@@ -101,7 +101,7 @@
         "@yebekhe"
       ],
       "max_messages_per_channel": 15,
-      "delay_ms": 300
+      "fetch_delay_ms": 600
     },
     "subscriptions": {
       "enabled": true,
@@ -117,7 +117,8 @@
         "https://raw.githubusercontent.com/10ium/V2RayAggregator/refs/heads/master/Eternity.txt"
       ],
       "timeout_val": 12,
-      "timeout_unit": "s"
+      "timeout_unit": "s",
+      "fetch_delay_ms": 100
     },
     "local_folder": {
       "enabled": false,
@@ -161,6 +162,7 @@
     "quiet_end": "07:00"
   },
   "testing_rounds": {
+    "enabled": false,
     "rounds_count": 1,
     "interval_between_rounds_sec": 15,
     "min_passed_rounds": 1
@@ -177,9 +179,13 @@
       "max_latency_ms": 1500,
       "url_presets": [
         "http://www.gstatic.com/generate_204",
+        "https://www.gstatic.com/generate_204",
+        "http://cp.cloudflare.com/generate_204",
         "https://cp.cloudflare.com/generate_204",
-        "https://www.apple.com/library/test/success.html",
-        "https://www.google.com/generate_204"
+        "http://connectivitycheck.gstatic.com/generate_204",
+        "https://connectivitycheck.gstatic.com/generate_204",
+        "http://www.apple.com/library/test/success.html",
+        "https://www.apple.com/library/test/success.html"
       ]
     },
     "geo_flag": {
@@ -220,14 +226,17 @@
       "enabled": false,
       "name_fa": "سنجش سرعت دانلود (Download Speed)",
       "description_fa": "تست دریافت ترافیک واقعی از سرور و محاسبه پهنای باند دانلود",
-      "test_url": "https://speed.cloudflare.com/__down?bytes=5000000",
+      "test_url": "https://speed.cloudflare.com/__down?bytes=10000000",
       "duration_val": 5,
       "duration_unit": "s",
       "concurrency": 5,
       "url_presets": [
         "https://speed.cloudflare.com/__down?bytes=5000000",
         "https://speed.cloudflare.com/__down?bytes=10000000",
-        "https://raw.githubusercontent.com/10ium/free-config/refs/heads/main/README.md"
+        "https://speed.cloudflare.com/__down?bytes=25000000",
+        "https://speed.cloudflare.com/__down?bytes=50000000",
+        "https://proof.ovh.net/files/10Mb.dat",
+        "https://speed.hetzner.de/10MB.bin"
       ],
       "file_size_mb": 10,
       "min_speed_kbps": 500
@@ -364,6 +373,9 @@
     "channel_id": "",
     "send_files": true,
     "send_summary": true,
+    "message_mode": "both",
+    "header_text": "⚡ مجموعه کانفیگ‌های تاییدشده Freedom Config Collector v2",
+    "footer_text": "🌐 ساخته‌شده با عشق برای دسترسی آزاد به اینترنت",
     "caption": "⚡ کانفیگ‌های تازه استخراج‌شده توسط Freedom Config Collector v2",
     "custom_caption": "⚡ کانفیگ‌های تازه استخراج‌شده توسط Freedom Config Collector v2"
   },

@@ -31,6 +31,7 @@ class _TesterScreenState extends State<TesterScreen> {
   String _timeoutUnit = 'ثانیه';
 
   // Multi-round testing
+  bool _roundsEnabled = false;
   int _roundsCount = 1;
   int _intervalBetweenRoundsSec = 15;
 
@@ -39,7 +40,7 @@ class _TesterScreenState extends State<TesterScreen> {
   double _maxPacketLossPercent = 0.0;
 
   // Download Speed Test settings
-  String _speedDownUrl = 'https://speed.cloudflare.com/__down?bytes=10485760';
+  String _speedDownUrl = 'https://speed.cloudflare.com/__down?bytes=10000000';
   late TextEditingController _customSpeedDownCtrl;
   int _downloadFileSizeMb = 10;
   int _minDownloadSpeedKbps = 500;
@@ -103,7 +104,7 @@ class _TesterScreenState extends State<TesterScreen> {
 
     // Download Speed
     _t4SpeedDown = speedDown['enabled'] ?? false;
-    _speedDownUrl = speedDown['test_url'] ?? 'https://speed.cloudflare.com/__down?bytes=10485760';
+    _speedDownUrl = speedDown['test_url'] ?? 'https://speed.cloudflare.com/__down?bytes=10000000';
     _customSpeedDownCtrl.text = _speedDownUrl;
     _downloadFileSizeMb = speedDown['file_size_mb'] ?? 10;
     _minDownloadSpeedKbps = speedDown['min_speed_kbps'] ?? 500;
@@ -119,6 +120,7 @@ class _TesterScreenState extends State<TesterScreen> {
     _uploadTimeoutSec = speedUp['timeout_val'] ?? 8;
 
     // Rounds
+    _roundsEnabled = rounds['enabled'] ?? false;
     _roundsCount = rounds['rounds_count'] ?? 1;
     _intervalBetweenRoundsSec = rounds['interval_between_rounds_sec'] ?? 15;
 
@@ -177,6 +179,7 @@ class _TesterScreenState extends State<TesterScreen> {
     _config.updateNestedSetting('tests', 'upload_speed', 'timeout_val', _uploadTimeoutSec);
 
     // Rounds
+    _config.updateSetting('testing_rounds', 'enabled', _roundsEnabled);
     _config.updateSetting('testing_rounds', 'rounds_count', _roundsCount);
     _config.updateSetting('testing_rounds', 'interval_between_rounds_sec', _intervalBetweenRoundsSec);
 
@@ -214,8 +217,8 @@ class _TesterScreenState extends State<TesterScreen> {
           title: Text(isPersian ? 'ورود به حساب گوگل' : 'Sign in to Google Account'),
           content: Text(
             isPersian
-                ? 'پنجره ورود به حساب گوگل در یک پروفایل امن و ایزوله باز خواهد شد تا سشن احراز هویت برای ارزیابی منطقه Gemini ذخیره گردد.\n(رمز عبور شما ذخیره نمی‌شود و صرفاً سشن مرورگر استفاده خواهد شد)'
-                : 'A dedicated browser window will open to capture the session for Gemini region checking.',
+                ? 'پنجره مرورگر کروم/ایج در یک پروفایل امن و ایزوله اختصاصی باز خواهد شد تا لاگین رسمی را انجام دهید. هیچ رمز عبوری در برنامه ذخیره نمی‌شود و صرفاً سشن احراز هویت جهت بررسی تحریم جمنای استفاده می‌گردد.'
+                : 'A dedicated browser profile will launch to capture the session for Gemini region checking.',
           ),
           actions: [
             TextButton(
@@ -223,22 +226,24 @@ class _TesterScreenState extends State<TesterScreen> {
               child: Text(isPersian ? 'انصراف' : 'Cancel'),
             ),
             FilledButton.icon(
-              onPressed: () {
+              onPressed: () async {
                 Navigator.pop(ctx);
+                await _config.launchGoogleSignIn();
                 setState(() {
                   _isGoogleLoggedIn = true;
-                  _googleAccountEmail = 'active.account@gmail.com';
+                  _googleAccountEmail = _config.googleAccountEmail;
                 });
-                _config.setGoogleLoggedIn(true, 'active.account@gmail.com');
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(isPersian ? 'ورود موفقیت‌آمیز بود! سشن گوگل برای تست‌ها فعال شد.' : 'Logged in successfully!'),
-                    backgroundColor: Colors.green,
-                  ),
-                );
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(isPersian ? 'ورود با موفقیت انجام شد! سشن گوگل برای تست‌ها فعال گردید.' : 'Logged in successfully!'),
+                      backgroundColor: Colors.green,
+                    ),
+                  );
+                }
               },
               icon: const Icon(Icons.login),
-              label: Text(isPersian ? 'باز کردن پنجره ورود' : 'Open Login Window'),
+              label: Text(isPersian ? 'باز کردن پنجره مرورگر' : 'Open Browser'),
             ),
           ],
         ),
@@ -279,69 +284,86 @@ class _TesterScreenState extends State<TesterScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Icon(Icons.repeat, color: Colors.purpleAccent, size: 28),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              isPersian ? 'تست چندباره نودها (Multi-Round Testing)' : 'Multi-Round Testing',
-                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.purpleAccent),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              isPersian
-                                  ? 'برای جلوگیری از حذف اشتباهی کانفیگ‌های سالم در شرایط سخت شبکه، کل لیست چند بار با وقفه تست می‌شود.'
-                                  : 'Repeat the test across multiple rounds with cooldown to avoid false negatives.',
-                              style: TextStyle(color: Colors.grey.shade400, fontSize: 12),
-                            ),
-                          ],
-                        ),
+                      Row(
+                        children: [
+                          const Icon(Icons.repeat, color: Colors.purpleAccent, size: 28),
+                          const SizedBox(width: 12),
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                isPersian ? 'تست چندباره نودها با وقفه (Multi-Round Testing)' : 'Multi-Round Testing',
+                                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.purpleAccent),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                isPersian
+                                    ? 'برای جلوگیری از حذف اشتباهی کانفیگ‌های سالم در شرایط سخت شبکه، کل لیست چند بار با وقفه تست می‌شود.'
+                                    : 'Repeat the test across multiple rounds with cooldown to avoid false negatives.',
+                                style: TextStyle(color: Colors.grey.shade400, fontSize: 12),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                      Switch(
+                        value: _roundsEnabled,
+                        onChanged: (v) => setState(() => _roundsEnabled = v),
                       ),
                     ],
                   ),
-                  const Divider(height: 24),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(isPersian ? 'تعداد دور تست:' : 'Rounds Count:'),
-                            const SizedBox(height: 8),
-                            SegmentedButton<int>(
-                              segments: const [
-                                ButtonSegment(value: 1, label: Text('۱ دور')),
-                                ButtonSegment(value: 2, label: Text('۲ دور')),
-                                ButtonSegment(value: 3, label: Text('۳ دور')),
-                                ButtonSegment(value: 5, label: Text('۵ دور')),
-                              ],
-                              selected: {_roundsCount},
-                              onSelectionChanged: (set) => setState(() => _roundsCount = set.first),
-                            ),
-                          ],
+                  if (_roundsEnabled) ...[
+                    const Divider(height: 24),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(isPersian ? 'تعداد دور تست:' : 'Rounds Count:'),
+                              const SizedBox(height: 8),
+                              SegmentedButton<int>(
+                                segments: const [
+                                  ButtonSegment(value: 1, label: Text('۱ دور')),
+                                  ButtonSegment(value: 2, label: Text('۲ دور')),
+                                  ButtonSegment(value: 3, label: Text('۳ دور')),
+                                  ButtonSegment(value: 5, label: Text('۵ دور')),
+                                ],
+                                selected: {_roundsCount},
+                                onSelectionChanged: (set) => setState(() => _roundsCount = set.first),
+                              ),
+                            ],
+                          ),
                         ),
-                      ),
-                      const SizedBox(width: 24),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(isPersian ? 'وقفه بین هر دور: $_intervalBetweenRoundsSec ثانیه' : 'Cooldown: $_intervalBetweenRoundsSec s'),
-                            Slider(
-                              min: 5,
-                              max: 60,
-                              divisions: 11,
-                              value: _intervalBetweenRoundsSec.toDouble(),
-                              onChanged: (v) => setState(() => _intervalBetweenRoundsSec = v.toInt()),
-                            ),
-                          ],
+                        const SizedBox(width: 24),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(isPersian ? 'وقفه بین هر دور: $_intervalBetweenRoundsSec ثانیه' : 'Cooldown: $_intervalBetweenRoundsSec s'),
+                              Slider(
+                                min: 5,
+                                max: 60,
+                                divisions: 11,
+                                value: _intervalBetweenRoundsSec.toDouble(),
+                                onChanged: (v) => setState(() => _intervalBetweenRoundsSec = v.toInt()),
+                              ),
+                            ],
+                          ),
                         ),
-                      ),
-                    ],
-                  ),
+                      ],
+                    ),
+                  ] else ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      isPersian
+                          ? 'تست چند مرحله‌ای خاموش است؛ نودها صرفاً در ۱ دور سریع و بدون وقفه ارزیابی می‌شوند.'
+                          : 'Multi-round testing disabled: nodes are tested in a single fast round.',
+                      style: TextStyle(fontSize: 12, color: Colors.grey.shade400),
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -391,32 +413,52 @@ class _TesterScreenState extends State<TesterScreen> {
                   ),
                   if (_t1Ping) ...[
                     const Divider(height: 24),
-                    Text(isPersian ? 'انتخاب آدرس تست تاخیر:' : 'Test URL:'),
+                    Text(isPersian ? 'انتخاب آدرس تست تاخیر (HTTP و HTTPS):' : 'Test URL Presets:'),
                     const SizedBox(height: 8),
                     DropdownButtonFormField<String>(
                       value: [
                         'http://www.gstatic.com/generate_204',
+                        'https://www.gstatic.com/generate_204',
+                        'http://cp.cloudflare.com/generate_204',
                         'https://cp.cloudflare.com/generate_204',
-                        'https://www.google.com/generate_204',
+                        'http://connectivitycheck.gstatic.com/generate_204',
+                        'https://connectivitycheck.gstatic.com/generate_204',
+                        'http://www.apple.com/library/test/success.html',
                         'https://www.apple.com/library/test/success.html',
                       ].contains(_pingUrl) ? _pingUrl : null,
                       hint: Text(isPersian ? 'انتخاب از لیست پیش‌فرض‌های پرسرعت' : 'Select a preset'),
                       items: const [
                         DropdownMenuItem(
                           value: 'http://www.gstatic.com/generate_204',
-                          child: Text('Google GStatic (سبک‌ترین و پایدارترین)'),
+                          child: Text('Google GStatic [HTTP] (بسیار سریع و سبک)'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'https://www.gstatic.com/generate_204',
+                          child: Text('Google GStatic [HTTPS] (استاندارد و امن)'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'http://cp.cloudflare.com/generate_204',
+                          child: Text('Cloudflare 204 [HTTP] (سرورهای جهانی)'),
                         ),
                         DropdownMenuItem(
                           value: 'https://cp.cloudflare.com/generate_204',
-                          child: Text('Cloudflare 204 (جهانی)'),
+                          child: Text('Cloudflare 204 [HTTPS] (رمزنگاری‌شده)'),
                         ),
                         DropdownMenuItem(
-                          value: 'https://www.google.com/generate_204',
-                          child: Text('Google 204 (استاندارد)'),
+                          value: 'http://connectivitycheck.gstatic.com/generate_204',
+                          child: Text('Android Check [HTTP] (گوگل اندروید)'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'https://connectivitycheck.gstatic.com/generate_204',
+                          child: Text('Android Check [HTTPS]'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'http://www.apple.com/library/test/success.html',
+                          child: Text('Apple Portal [HTTP]'),
                         ),
                         DropdownMenuItem(
                           value: 'https://www.apple.com/library/test/success.html',
-                          child: Text('Apple Captive Portal'),
+                          child: Text('Apple Portal [HTTPS]'),
                         ),
                       ],
                       onChanged: (val) {
@@ -433,7 +475,7 @@ class _TesterScreenState extends State<TesterScreen> {
                       controller: _customPingCtrl,
                       decoration: InputDecoration(
                         border: const OutlineInputBorder(),
-                        labelText: isPersian ? 'آدرس دقیق لینک تست تاخیر' : 'Custom Ping URL',
+                        labelText: isPersian ? 'یا وارد کردن آدرس سفارشی تست تاخیر (Custom Ping URL)' : 'Custom Ping URL',
                       ),
                     ),
                     const SizedBox(height: 16),
@@ -832,11 +874,59 @@ class _TesterScreenState extends State<TesterScreen> {
                   ),
                   if (_t4SpeedDown) ...[
                     const Divider(height: 24),
+                    Text(isPersian ? 'انتخاب سرور و اندازه فایل دانلودی:' : 'Download Test Server & Size:'),
+                    const SizedBox(height: 8),
+                    DropdownButtonFormField<String>(
+                      value: [
+                        'https://speed.cloudflare.com/__down?bytes=5000000',
+                        'https://speed.cloudflare.com/__down?bytes=10000000',
+                        'https://speed.cloudflare.com/__down?bytes=25000000',
+                        'https://speed.cloudflare.com/__down?bytes=50000000',
+                        'https://proof.ovh.net/files/10Mb.dat',
+                        'https://speed.hetzner.de/10MB.bin',
+                      ].contains(_speedDownUrl) ? _speedDownUrl : null,
+                      hint: Text(isPersian ? 'انتخاب از لیست سرورهای پرسرعت جهانی' : 'Select a preset'),
+                      items: const [
+                        DropdownMenuItem(
+                          value: 'https://speed.cloudflare.com/__down?bytes=5000000',
+                          child: Text('Cloudflare Speed 5MB (سریع و استاندارد)'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'https://speed.cloudflare.com/__down?bytes=10000000',
+                          child: Text('Cloudflare Speed 10MB (دقیق و پیشنهادی)'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'https://speed.cloudflare.com/__down?bytes=25000000',
+                          child: Text('Cloudflare Speed 25MB (پهنای باند بالا)'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'https://speed.cloudflare.com/__down?bytes=50000000',
+                          child: Text('Cloudflare Speed 50MB (سنگین / فیبر نوری)'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'https://proof.ovh.net/files/10Mb.dat',
+                          child: Text('OVH Telecom 10MB (دیتاسنتر اروپا)'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'https://speed.hetzner.de/10MB.bin',
+                          child: Text('Hetzner Speedtest 10MB (آلمان)'),
+                        ),
+                      ],
+                      onChanged: (val) {
+                        if (val != null) {
+                          setState(() {
+                            _speedDownUrl = val;
+                            _customSpeedDownCtrl.text = val;
+                          });
+                        }
+                      },
+                    ),
+                    const SizedBox(height: 12),
                     TextField(
                       controller: _customSpeedDownCtrl,
                       decoration: InputDecoration(
                         border: const OutlineInputBorder(),
-                        labelText: isPersian ? 'آدرس لینک تست دانلود' : 'Download Test URL',
+                        labelText: isPersian ? 'یا وارد کردن آدرس سفارشی فایل آزمایشی' : 'Custom Download Test URL',
                       ),
                     ),
                     const SizedBox(height: 16),

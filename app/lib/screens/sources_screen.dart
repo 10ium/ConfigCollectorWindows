@@ -19,6 +19,9 @@ class _SourcesScreenState extends State<SourcesScreen> {
   bool _providersEnabled = true;
   bool _localFolderEnabled = false;
 
+  int _telegramDelayMs = 600;
+  int _subTimeoutSec = 12;
+
   @override
   void initState() {
     super.initState();
@@ -37,6 +40,9 @@ class _SourcesScreenState extends State<SourcesScreen> {
     _telegramEnabled = tg['enabled'] ?? true;
     _providersEnabled = sub['enabled'] ?? true;
     _localFolderEnabled = loc['enabled'] ?? false;
+
+    _telegramDelayMs = tg['fetch_delay_ms'] ?? tg['delay_ms'] ?? 600;
+    _subTimeoutSec = sub['timeout_val'] ?? 12;
 
     final channels = (tg['channels'] as List?)?.join('\n') ?? '';
     final urls = (sub['urls'] as List?)?.join('\n') ?? '';
@@ -64,17 +70,23 @@ class _SourcesScreenState extends State<SourcesScreen> {
         .where((e) => e.isNotEmpty)
         .toList();
 
+    // Auto-convert GitHub web URLs to raw URLs on the fly
     final urlsList = _providersCtrl.text
         .split('\n')
-        .map((e) => e.trim())
+        .map((e) => ConfigService.normalizeGithubUrl(e))
         .where((e) => e.isNotEmpty)
         .toList();
 
+    // Update text field to show converted raw links
+    _providersCtrl.text = urlsList.join('\n');
+
     _config.updateNestedSetting('sources', 'telegram', 'enabled', _telegramEnabled);
     _config.updateNestedSetting('sources', 'telegram', 'channels', channelsList);
+    _config.updateNestedSetting('sources', 'telegram', 'fetch_delay_ms', _telegramDelayMs);
 
     _config.updateNestedSetting('sources', 'subscriptions', 'enabled', _providersEnabled);
     _config.updateNestedSetting('sources', 'subscriptions', 'urls', urlsList);
+    _config.updateNestedSetting('sources', 'subscriptions', 'timeout_val', _subTimeoutSec);
 
     _config.updateNestedSetting('sources', 'local_folder', 'enabled', _localFolderEnabled);
     _config.updateNestedSetting('sources', 'local_folder', 'path', _folderCtrl.text.trim());
@@ -83,7 +95,7 @@ class _SourcesScreenState extends State<SourcesScreen> {
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(isPersian ? 'منابع با موفقیت ذخیره شدند.' : 'Sources saved successfully.'),
+        content: Text(isPersian ? 'منابع با موفقیت ذخیره شدند (لینک‌های گیت‌هاب به Raw تبدیل شدند).' : 'Sources saved with GitHub Raw conversion.'),
         backgroundColor: Colors.green,
       ),
     );
@@ -108,7 +120,7 @@ class _SourcesScreenState extends State<SourcesScreen> {
       body: ListView(
         padding: const EdgeInsets.all(24.0),
         children: [
-          // Banner
+          // Multi-Source Quick Selection Row
           Card(
             elevation: 0,
             shape: RoundedRectangleBorder(
@@ -118,17 +130,43 @@ class _SourcesScreenState extends State<SourcesScreen> {
             color: Theme.of(context).cardColor,
             child: Padding(
               padding: const EdgeInsets.all(16.0),
-              child: Row(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Icon(Icons.info_outline, color: Colors.blueAccent),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      isPersian
-                          ? 'نام این بخش طبق استاندارد به «پروکسی پروایدر» (Proxy Provider) به‌روزرسانی شد. می‌توانید لینک‌های اشتراک و کانال‌های تلگرام را در هر سطر جداگانه وارد کنید.'
-                          : 'Sources updated to "Proxy Provider". Enter subscription links and Telegram channels one per line.',
-                      style: const TextStyle(color: Colors.blueAccent),
-                    ),
+                  Row(
+                    children: [
+                      const Icon(Icons.tune, color: Colors.blueAccent),
+                      const SizedBox(width: 10),
+                      Text(
+                        isPersian ? 'انتخاب و شخصی‌سازی منابع فعال (چند انتخابی):' : 'Active Sources Selection (Multi-Select):',
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 10,
+                    runSpacing: 8,
+                    children: [
+                      FilterChip(
+                        avatar: Icon(Icons.telegram, size: 18, color: _telegramEnabled ? Colors.white : Colors.blue),
+                        label: Text(isPersian ? 'کانال‌های تلگرام' : 'Telegram Channels'),
+                        selected: _telegramEnabled,
+                        onSelected: (val) => setState(() => _telegramEnabled = val),
+                      ),
+                      FilterChip(
+                        avatar: Icon(Icons.hub, size: 18, color: _providersEnabled ? Colors.white : Colors.indigoAccent),
+                        label: Text(isPersian ? 'پروکسی پروایدرها (لینک‌های اشتراک)' : 'Proxy Providers'),
+                        selected: _providersEnabled,
+                        onSelected: (val) => setState(() => _providersEnabled = val),
+                      ),
+                      FilterChip(
+                        avatar: Icon(Icons.folder, size: 18, color: _localFolderEnabled ? Colors.white : Colors.amber),
+                        label: Text(isPersian ? 'پوشه فایل‌های محلی' : 'Local Folder'),
+                        selected: _localFolderEnabled,
+                        onSelected: (val) => setState(() => _localFolderEnabled = val),
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -161,7 +199,7 @@ class _SourcesScreenState extends State<SourcesScreen> {
                                 isPersian
                                     ? 'لینک‌های سابسکریپشن کلش و فایل‌های آنلاین متنی یا YAML'
                                     : 'Clash subscription URLs & online text/yaml files',
-                                style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
+                                style: TextStyle(color: Colors.grey.shade400, fontSize: 12),
                               ),
                             ],
                           ),
@@ -175,6 +213,29 @@ class _SourcesScreenState extends State<SourcesScreen> {
                   ),
                   if (_providersEnabled) ...[
                     const Divider(height: 24),
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      margin: const EdgeInsets.only(bottom: 12),
+                      decoration: BoxDecoration(
+                        color: Colors.indigo.withOpacity(0.12),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.indigo.withOpacity(0.3)),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.auto_fix_high, size: 18, color: Colors.indigoAccent),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              isPersian
+                                  ? 'تبدیل خودکار لینک‌های گیت‌هاب فعال است: لینک‌های حاوی github.com/blob خودکار به فرمت فایل خام (Raw) تبدیل می‌شوند.'
+                                  : 'GitHub raw auto-conversion active: blob URLs automatically convert to raw.githubusercontent.com.',
+                              style: const TextStyle(fontSize: 11, color: Colors.indigoAccent),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                     TextField(
                       controller: _providersCtrl,
                       maxLines: 5,
@@ -183,6 +244,20 @@ class _SourcesScreenState extends State<SourcesScreen> {
                         hintText: 'https://example.com/sub/all.yaml\nhttps://example.com/sub2.txt',
                         labelText: isPersian ? 'آدرس لینک‌های پروکسی پروایدر (هر خط یک آدرس)' : 'Proxy Provider URLs (One per line)',
                       ),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      isPersian
+                          ? 'مهلت دریافت پاسخ از سرور پروایدر: $_subTimeoutSec ثانیه'
+                          : 'Subscription Request Timeout: $_subTimeoutSec s',
+                      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+                    ),
+                    Slider(
+                      min: 5,
+                      max: 60,
+                      divisions: 11,
+                      value: _subTimeoutSec.toDouble(),
+                      onChanged: (v) => setState(() => _subTimeoutSec = v.toInt()),
                     ),
                   ],
                 ],
@@ -216,7 +291,7 @@ class _SourcesScreenState extends State<SourcesScreen> {
                                 isPersian
                                     ? 'استخراج خودکار آخرین کانفیگ‌های منتشرشده در پیام‌های کانال‌ها'
                                     : 'Auto-scrape proxy configs from public channel posts',
-                                style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
+                                style: TextStyle(color: Colors.grey.shade400, fontSize: 12),
                               ),
                             ],
                           ),
@@ -238,6 +313,26 @@ class _SourcesScreenState extends State<SourcesScreen> {
                         hintText: '@Channel1\n@Channel2\nhttps://t.me/s/Channel3',
                         labelText: isPersian ? 'آیدی یا لینک کانال‌ها (هر خط یک کانال)' : 'Channel IDs or Links (One per line)',
                       ),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      isPersian
+                          ? 'وقفه بین واکشی پست‌های کانال‌های تلگرام: $_telegramDelayMs میلی‌ثانیه'
+                          : 'Telegram Fetch Delay: $_telegramDelayMs ms',
+                      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+                    ),
+                    Slider(
+                      min: 100,
+                      max: 2000,
+                      divisions: 19,
+                      value: _telegramDelayMs.toDouble(),
+                      onChanged: (v) => setState(() => _telegramDelayMs = v.toInt()),
+                    ),
+                    Text(
+                      isPersian
+                          ? 'نکته: وقفه بین کانال‌های تلگرام برای پیشگیری از بلاک شدن آی‌پی توسط وب تلگرام است.'
+                          : 'Note: This delay prevents Telegram Web from rate-limiting or blocking IP requests.',
+                      style: TextStyle(fontSize: 11, color: Colors.grey.shade400),
                     ),
                   ],
                 ],

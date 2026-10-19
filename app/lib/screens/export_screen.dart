@@ -56,6 +56,11 @@ class _ExportScreenState extends State<ExportScreen> {
     final rawPriority = of['protocol_priority'] as List?;
     if (rawPriority != null && rawPriority.isNotEmpty) {
       _protocolPriority = rawPriority.map((e) => e.toString()).toList();
+      for (final p in ConfigService.allCategorizedProtocols) {
+        if (!_protocolPriority.contains(p)) {
+          _protocolPriority.add(p);
+        }
+      }
     } else {
       _protocolPriority = List.from(ConfigService.allCategorizedProtocols);
     }
@@ -63,12 +68,12 @@ class _ExportScreenState extends State<ExportScreen> {
     final rawLimits = of['per_protocol_limits'] as Map<String, dynamic>? ?? {};
     _protocolLimits = {};
     for (final p in _protocolPriority) {
-      _protocolLimits[p] = (rawLimits[p] ?? 0) as int;
+      if (rawLimits.containsKey(p)) {
+        _protocolLimits[p] = (rawLimits[p] ?? 0) as int;
+      } else {
+        _protocolLimits[p] = (p == 'VLESS' || p == 'Hysteria 2') ? 100 : 50;
+      }
     }
-    if (_protocolLimits['VLESS'] == 0) _protocolLimits['VLESS'] = 100;
-    if (_protocolLimits['Hysteria 2'] == 0) _protocolLimits['Hysteria 2'] = 100;
-    if (_protocolLimits['Trojan'] == 0) _protocolLimits['Trojan'] = 80;
-    if (_protocolLimits['VMess'] == 0) _protocolLimits['VMess'] = 60;
 
     final tray = _config.settings['system_tray'] ?? {};
     _minimizeToTray = tray['minimize_to_tray_on_close'] ?? true;
@@ -317,13 +322,13 @@ class _ExportScreenState extends State<ExportScreen> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                isPersian ? 'اولویت‌بندی پروتکل‌ها (چینش با جابجایی) و سقف اختصاصی' : 'Protocol Priority (Drag & Drop) & Limits',
+                                isPersian ? 'اولویت‌بندی ۳۰ پروتکل (چینش ترتیبی با Drag & Drop)' : 'Protocol Priority (Drag & Drop) & Limits',
                                 style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
                               ),
                               Text(
                                 isPersian
-                                    ? 'پروتکل‌های بالاتر در خروجی اولویت دارند؛ می‌توانید با نگه‌داشتن و کشیدن ترتیب را عوض کنید.'
-                                    : 'Higher items fill the export quota first. Drag items to reorder priority.',
+                                    ? 'خروجی به ترتیب از بالا به پایین پر می‌شود؛ سقف ۰ به معنای حذف کامل آن پروتکل از خروجی است.'
+                                    : 'Fills from top to bottom based on caps. Setting 0 completely excludes that protocol.',
                                 style: TextStyle(color: Colors.grey.shade400, fontSize: 12),
                               ),
                             ],
@@ -333,8 +338,31 @@ class _ExportScreenState extends State<ExportScreen> {
                     ],
                   ),
                   const Divider(height: 20),
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    margin: const EdgeInsets.only(bottom: 12),
+                    decoration: BoxDecoration(
+                      color: Colors.indigo.withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.indigo.withOpacity(0.3)),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.info_outline, size: 18, color: Colors.indigoAccent),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            isPersian
+                                ? 'نحوه تخصیص: ابتدا پروتکل ردیف ۱ تا سقف تعیین‌شده پر می‌شود، سپس ردیف ۲ و بعدی‌ها تا زمانی که مجموع به سقف کل خروجی برسد.'
+                                : 'Sequential filling: Highest priority protocols are filled first up to their cap until total limit is reached.',
+                            style: const TextStyle(fontSize: 11, color: Colors.indigoAccent),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                   SizedBox(
-                    height: 380,
+                    height: 420,
                     child: ReorderableListView.builder(
                       shrinkWrap: true,
                       itemCount: _protocolPriority.length,
@@ -348,15 +376,22 @@ class _ExportScreenState extends State<ExportScreen> {
                       itemBuilder: (context, index) {
                         final proto = _protocolPriority[index];
                         final cap = _protocolLimits[proto] ?? 0;
+                        final isExcluded = (cap == 0);
 
                         return Container(
                           key: ValueKey(proto),
                           margin: const EdgeInsets.symmetric(vertical: 3),
                           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                           decoration: BoxDecoration(
-                            color: Theme.of(context).scaffoldBackgroundColor,
+                            color: isExcluded
+                                ? Theme.of(context).scaffoldBackgroundColor.withOpacity(0.5)
+                                : Theme.of(context).scaffoldBackgroundColor,
                             borderRadius: BorderRadius.circular(10),
-                            border: Border.all(color: Colors.grey.withOpacity(0.2)),
+                            border: Border.all(
+                              color: isExcluded
+                                  ? Colors.red.withOpacity(0.2)
+                                  : Colors.grey.withOpacity(0.2),
+                            ),
                           ),
                           child: Row(
                             children: [
@@ -364,13 +399,37 @@ class _ExportScreenState extends State<ExportScreen> {
                               const SizedBox(width: 12),
                               Text(
                                 '#${index + 1}',
-                                style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.blueAccent),
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  color: isExcluded ? Colors.grey : Colors.blueAccent,
+                                ),
                               ),
                               const SizedBox(width: 12),
                               Expanded(
-                                child: Text(
-                                  proto,
-                                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                                child: Row(
+                                  children: [
+                                    Text(
+                                      proto,
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 13,
+                                        color: isExcluded ? Colors.grey.shade500 : Colors.white,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    if (isExcluded)
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                        decoration: BoxDecoration(
+                                          color: Colors.red.withOpacity(0.15),
+                                          borderRadius: BorderRadius.circular(4),
+                                        ),
+                                        child: Text(
+                                          isPersian ? 'حذف از خروجی' : 'Excluded',
+                                          style: const TextStyle(fontSize: 10, color: Colors.redAccent, fontWeight: FontWeight.bold),
+                                        ),
+                                      ),
+                                  ],
                                 ),
                               ),
                               Text(
@@ -379,21 +438,27 @@ class _ExportScreenState extends State<ExportScreen> {
                               ),
                               const SizedBox(width: 8),
                               SizedBox(
-                                width: 70,
+                                width: 75,
                                 height: 36,
                                 child: TextFormField(
                                   initialValue: '$cap',
                                   keyboardType: TextInputType.number,
                                   textAlign: TextAlign.center,
-                                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.bold,
+                                    color: isExcluded ? Colors.redAccent : Colors.white,
+                                  ),
                                   decoration: InputDecoration(
                                     contentPadding: const EdgeInsets.symmetric(vertical: 6),
                                     border: OutlineInputBorder(borderRadius: BorderRadius.circular(6)),
-                                    hintText: '۰ = نامحدود',
+                                    hintText: '۰ = حذف',
                                   ),
                                   onChanged: (v) {
                                     final parsed = int.tryParse(v.trim()) ?? 0;
-                                    _protocolLimits[proto] = parsed;
+                                    setState(() {
+                                      _protocolLimits[proto] = parsed;
+                                    });
                                   },
                                 ),
                               ),

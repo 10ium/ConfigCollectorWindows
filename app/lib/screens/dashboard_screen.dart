@@ -123,11 +123,117 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         ),
                       ],
                     ),
-                    if (_config.isRunning) ...[
-                      const SizedBox(height: 16),
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
-                        child: LinearProgressIndicator(value: _config.progress, minHeight: 8),
+                    if (_config.isRunning || _config.currentStage > 0) ...[
+                      const SizedBox(height: 20),
+                      // 5-Stage Stepper Bar
+                      Container(
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: Theme.of(context).scaffoldBackgroundColor.withOpacity(0.6),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.grey.withOpacity(0.2)),
+                        ),
+                        child: Column(
+                          children: [
+                            // Stages Row
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: List.generate(ConfigService.stageTitles.length, (idx) {
+                                final stageNum = idx + 1;
+                                final isDone = _config.currentStage > stageNum;
+                                final isActive = _config.currentStage == stageNum;
+
+                                Color iconColor = Colors.grey.shade600;
+                                if (isDone) iconColor = Colors.greenAccent;
+                                if (isActive) iconColor = Theme.of(context).colorScheme.primary;
+
+                                return Expanded(
+                                  child: Column(
+                                    children: [
+                                      CircleAvatar(
+                                        radius: 14,
+                                        backgroundColor: iconColor.withOpacity(0.2),
+                                        child: isDone
+                                            ? const Icon(Icons.check, size: 14, color: Colors.greenAccent)
+                                            : Text(
+                                                '$stageNum',
+                                                style: TextStyle(
+                                                  fontSize: 11,
+                                                  fontWeight: FontWeight.bold,
+                                                  color: iconColor,
+                                                ),
+                                              ),
+                                      ),
+                                      const SizedBox(height: 6),
+                                      Text(
+                                        ConfigService.stageTitles[idx],
+                                        textAlign: TextAlign.center,
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
+                                          color: isActive ? Colors.white : Colors.grey.shade400,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              }),
+                            ),
+                            const SizedBox(height: 14),
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(8),
+                              child: LinearProgressIndicator(
+                                value: _config.progress,
+                                minHeight: 8,
+                                backgroundColor: Colors.grey.withOpacity(0.2),
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                            // Counters and ETA Row
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Row(
+                                  children: [
+                                    Icon(Icons.pie_chart_outline, size: 16, color: Colors.grey.shade400),
+                                    const SizedBox(width: 6),
+                                    Text(
+                                      isPersian
+                                          ? 'پیشرفت: ${(_config.progress * 100).toInt()}%'
+                                          : 'Progress: ${(_config.progress * 100).toInt()}%',
+                                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                                    ),
+                                  ],
+                                ),
+                                Row(
+                                  children: [
+                                    Icon(Icons.inventory_2_outlined, size: 16, color: Colors.grey.shade400),
+                                    const SizedBox(width: 6),
+                                    Text(
+                                      isPersian
+                                          ? 'بررسی‌شده: ${_config.completedItems} از ${_config.totalEstimatedItems}'
+                                          : 'Checked: ${_config.completedItems} / ${_config.totalEstimatedItems}',
+                                      style: TextStyle(fontSize: 12, color: Colors.grey.shade300),
+                                    ),
+                                  ],
+                                ),
+                                if (_config.etaString.isNotEmpty)
+                                  Row(
+                                    children: [
+                                      Icon(Icons.timer_outlined, size: 16, color: Colors.grey.shade400),
+                                      const SizedBox(width: 6),
+                                      Text(
+                                        isPersian ? 'زمان باقی‌مانده: ${_config.etaString}' : 'ETA: ${_config.etaString}',
+                                        style: const TextStyle(fontSize: 12, color: Colors.orangeAccent, fontWeight: FontWeight.bold),
+                                      ),
+                                    ],
+                                  ),
+                              ],
+                            ),
+                          ],
+                        ),
                       ),
                     ],
                   ],

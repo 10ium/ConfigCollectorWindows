@@ -17,8 +17,22 @@ type SubscriptionCollector struct {
 	Client *http.Client
 }
 
+// NormalizeSubscriptionURL converts GitHub blob/web URLs to direct raw.githubusercontent.com URLs.
+func NormalizeSubscriptionURL(subURL string) string {
+	trimmed := strings.TrimSpace(subURL)
+	if strings.HasPrefix(trimmed, "https://github.com/") || strings.HasPrefix(trimmed, "http://github.com/") {
+		if strings.Contains(trimmed, "/blob/") {
+			normalized := strings.Replace(trimmed, "github.com/", "raw.githubusercontent.com/", 1)
+			normalized = strings.Replace(normalized, "/blob/", "/", 1)
+			return normalized
+		}
+	}
+	return trimmed
+}
+
 // FetchSubscription downloads a subscription URL and extracts nodes.
 func (sc *SubscriptionCollector) FetchSubscription(ctx context.Context, subURL string) ([]*model.Node, error) {
+	subURL = NormalizeSubscriptionURL(subURL)
 	req, err := http.NewRequestWithContext(ctx, "GET", subURL, nil)
 	if err != nil {
 		return nil, err
