@@ -98,5 +98,54 @@
 - **Windows System Tray & Background Execution**:
   - Native Windows Forms `NotifyIcon` helper script (`tools/tray_helper.ps1`) runs without third-party python modules like `pystray`.
   - Provides quick tray context menu: Open Dashboard, Run Now, Exit.
+
+## 14. V2.0.0 Comprehensive Refinements & User Experience Upgrades (Build 39334018600)
+- **Multi-Stage Progress Tracker**:
+  - Implemented 5 clear sequential stages (Stage 1: Collection, Stage 2: Deduplication, Stage 3: Ping, Stage 4: Advanced Testing, Stage 5: Final Export).
+  - Displays dynamic percentages, item counters (`checked / total`), and estimated time remaining (ETA).
+- **Hyper-Precise Protocol-Aware Deduplication Fingerprinting**:
+  - Replaced naive endpoint hashing with a 30-field deterministic signature incorporating protocol, host, port, SNI, path, network transport, security layer, flow, reality PBK/ShortID/SpiderX, cipher method, Obfs, WireGuard keys, and slowDNS domain.
+  - Guarantees nodes sharing identical IPs/ports but distinct routes or SNIs are never falsely dropped.
+- **Flexible Multi-Source Selection**:
+  - Decoupled source choices into 3 independent toggle chips allowing any simultaneous combination (Telegram, Subscriptions, Local folder).
+- **Source Delay Separation**:
+  - Split Telegram channel delay (100–2000 ms) and Subscription network timeout (5–60 s) into independent controls.
+- **Automated GitHub Raw Conversion**:
+  - Automatically rewrites `github.com/.../blob/...` URLs into `raw.githubusercontent.com/...` both in the Go engine and in the Flutter UI.
+- **Proxy Health & Latency Checker**:
+  - Dedicated network diagnostic in Settings testing Google (`generate_204`) and Telegram (`web.telegram.org`) latency via local proxy (`127.0.0.1:7890`) with live millisecond indicators.
+- **Testing Presets**:
+  - Added comprehensive HTTP & HTTPS ping URL presets + custom URL input.
+  - Added speed test presets (5MB, 10MB, 25MB, 50MB across Cloudflare, Hetzner, OVH) + custom file URL input.
+- **All 30 Protocols Supported in Reorderable Export Priority**:
+  - Full drag-and-drop protocol sorting with sequential quota filling.
+  - Cap `0` explicitly excludes a protocol from export files.
+  - Global maximum cap defaults to 600 with an unlimited toggle option.
+- **Telegram Dispatcher Custom Formatting**:
+  - Added 4 message formatting modes: `no_text`, `header_only`, `footer_only`, and `both` (header + footer) with live custom input fields.
 - **Standalone Binary Packaging**:
   - Single-file standalone executable (`FreedomConfigCollector.exe`, 8.3MB) compiled with PyInstaller 6.22, embedding modern multi-resolution icons (`app_icon.ico`) and hidden imports.
+
+## 15. V2.1.0 Protocol Specialization, Core Manager & Real Execution Upgrades
+- **Strict Protocol Category Isolation**:
+  - Segregated protocol monitoring and export into 3 distinct categories on dashboard and engine:
+    1. **Mihomo Native Protocols** (26 protocols: VLESS, VMess, Trojan, SS, SSR, Hy2, Hy1, TUIC, WireGuard, AmneziaWG, MASQUE, ShadowTLS, Snell, AnyTLS, Juicity, ShadowQUIC, TrustTunnel, Sudoku, Mieru, EasyTier, Tailscale, ZeroTier, Rematch, OpenVPN, SOCKS5, HTTP).
+    2. **DNS & Tunnel Protocols** (14 protocols: WhiteDNS SOAR `soar://`, CottenDNS `cottendns://`, WhiteDNS Profile `whitedns://`, DNSTT, SlipNet, NetMod DNS `nm-dns`, NetMod VLESS DNS `nm-vless`, VayDNS, StormDNS, MasterDNS, NoizDNS, SSH over DNS, DoH, Raw DNS `dns://`).
+    3. **Telegram Dedicated Proxies** (MTProto `tg://proxy`, SOCKS5 `tg://socks`, Web Proxy `t.me/proxy`, HTTP/SOCKS).
+- **Auto-Save & Reset Defaults Engine**:
+  - Added debounced auto-save (300ms) on every single UI parameter and slider adjustment; removed manual save requirements.
+  - Added a one-click "بازنشانی به پیش‌فرض" (Reset to Defaults) button in AppBar to restore factory defaults.
+- **Micro-Stepped Fine-Tuning Sliders (Step = 1)**:
+  - All test sliders configured with single-unit divisions and manual `[-]` / `[+]` stepping buttons.
+  - Concurrency slider capped safely with an adaptive warning banner triggering above 200 concurrent tasks.
+- **Robust CDP Google Authentication**:
+  - Implemented real Chrome DevTools Protocol polling against port 9222 and cookie verification (`SAPISID` and `SID`).
+  - Completely prevents premature/false login states if the browser window is closed before authentication completes.
+- **Automated Results Export**:
+  - Automatic export on scan completion directly to `output/` (`mihomo_proxies.yaml`, `raw_configs.txt`, `summary.json`).
+  - Direct 1-click button to open `output/` in Windows Explorer (`Process.start('explorer.exe', ['output'])`).
+- **Mihomo Core Lifecycle Manager**:
+  - Settings screen card detects local binary version via `bin/mihomo.exe -v`.
+  - Queries `MetaCubeX/mihomo` GitHub releases API, compares versions, and downloads/installs compatible architecture binaries with live progress reporting.
+- **Live Terminal Log Viewer**:
+  - Created `LogsScreen` providing color-coded real-time event logs, source tags, severity filters (`all`, `success`, `error`), live text search, auto-scrolling toggle, and clipboard copying.

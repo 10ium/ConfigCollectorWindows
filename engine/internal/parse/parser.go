@@ -139,12 +139,12 @@ func parseSingleURI(rawURI string) (*model.Node, error) {
 		return ParseTuic(rawURI)
 	case strings.HasPrefix(low, "ss://"):
 		return ParseShadowsocks(rawURI)
-	case strings.HasPrefix(low, "tg://"):
+	case strings.HasPrefix(low, "tg://") || strings.HasPrefix(low, "https://t.me/") || strings.HasPrefix(low, "http://t.me/"):
 		return ParseTelegramProxy(rawURI)
 	case strings.HasPrefix(low, "openvpn://"):
 		return ParseOpenVPNURI(rawURI)
 	default:
-		// Extended protocols: snell, shadowtls, anytls, ssh, masque, ssr, dnstt, slipnet, etc.
+		// Extended protocols: soar, cottendns, whitedns, snell, shadowtls, anytls, ssh, masque, ssr, dnstt, slipnet, etc.
 		return ParseGenericURI(rawURI)
 	}
 }

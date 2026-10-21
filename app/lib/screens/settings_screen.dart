@@ -28,14 +28,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late TextEditingController _captionCtrl;
   late TextEditingController _headerTextCtrl;
   late TextEditingController _footerTextCtrl;
-  String _messageMode = 'both'; // 'no_text', 'header_only', 'footer_only', 'both'
+  String _messageMode = 'both';
   bool _sendFiles = true;
   bool _sendSummary = true;
   String _botTestStatus = '';
 
-  // Mihomo Core Architecture
+  // Mihomo Core Architecture & Manager
   String _preferredArch = 'windows-amd64';
   String _detectedArch = 'windows-amd64';
+  bool _isCheckingCore = false;
+  Map<String, dynamic>? _coreStatus;
+  bool _isDownloadingCore = false;
+  double _coreDownloadProgress = 0.0;
+  String _coreDownloadMsg = '';
 
   // In-App Update State
   bool _isCheckingUpdate = false;
@@ -54,6 +59,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _footerTextCtrl = TextEditingController(text: '🌐 ساخته‌شده با عشق برای دسترسی آزاد به اینترنت');
     _detectSystemArchitecture();
     _loadFromConfig();
+    _checkCoreStatusQuietly();
   }
 
   void _detectSystemArchitecture() {
@@ -102,9 +108,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     super.dispose();
   }
 
-  void _saveSettings() {
-    final isPersian = Localizations.localeOf(context).languageCode == 'fa';
-
+  void _autoSaveQuietly() {
     _config.updateSetting('network', 'mode', _networkMode);
     _config.updateSetting('network', 'proxy_host', _proxyHostCtrl.text.trim());
     _config.updateSetting('network', 'proxy_port', int.tryParse(_proxyPortCtrl.text.trim()) ?? 7890);
@@ -120,29 +124,122 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _config.updateSetting('telegram_sender', 'send_summary', _sendSummary);
 
     _config.updateSetting('core_manager', 'preferred_arch', _preferredArch);
+  }
 
+  void _saveSettingsExplicit() {
+    _autoSaveQuietly();
     _config.saveSettings();
-
+    final isPersian = Localizations.localeOf(context).languageCode == 'fa';
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(isPersian ? 'تنظیمات عمومی با موفقیت ذخیره شد.' : 'Settings saved successfully.'),
-        backgroundColor: Colors.green,
+        content: Text(isPersian ? 'تنظیمات با موفقیت ذخیره شد.' : 'Settings saved successfully.'),
+        backgroundColor: Colors.teal,
       ),
     );
   }
 
-  void _testProxyConnection() async {
+  void _resetToDefaults() {
     final isPersian = Localizations.localeOf(context).languageCode == 'fa';
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(isPersian ? 'بازنشانی تنظیمات به پیش‌فرض' : 'Reset to Default Settings'),
+        content: Text(
+          isPersian
+              ? 'آیا مطمئن هستید که می‌خواهید تمام تنظیمات برنامه را به مقادیر پیش‌فرض اولیه بازگردانید؟'
+              : 'Are you sure you want to restore all settings to default values?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(isPersian ? 'انصراف' : 'Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              _config.resetToDefaults();
+              _loadFromConfig();
+              setState(() {});
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(isPersian ? 'کلیه تنظیمات به حالت پیش‌فرض اولیه بازگردانده شدند.' : 'Settings restored to defaults.'),
+                  backgroundColor: Colors.teal,
+                ),
+              );
+            },
+            child: Text(isPersian ? 'بازنشانی' : 'Reset'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _checkCoreStatusQuietly() async {
+    final status = await _config.checkMihomoCoreStatus();
+    if (mounted) {
+      setState(() => _coreStatus = status);
+    }
+  }
+
+  void _checkCoreStatusExplicit() async {
+    setState(() => _isCheckingCore = true);
+    final status = await _config.checkMihomoCoreStatus();
+    if (mounted) {
+      setState(() {
+        _isCheckingCore = false;
+        _coreStatus = status;
+      });
+    }
+  }
+
+  void _downloadCore() async {
+    setState(() {
+      _isDownloadingCore = true;
+      _coreDownloadProgress = 0.05;
+      _coreDownloadMsg = 'در حال آماده‌سازی دانلود...';
+    });
+
+    final success = await _config.downloadMihomoCore(
+      onProgress: (prog, msg) {
+        if (mounted) {
+          setState(() {
+            _coreDownloadProgress = prog;
+            _coreDownloadMsg = msg;
+          });
+        }
+      },
+    );
+
+    if (mounted) {
+      setState(() => _isDownloadingCore = false);
+      _checkCoreStatusExplicit();
+      final isPersian = Localizations.localeOf(context).languageCode == 'fa';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            success
+                ? (isPersian ? 'هسته Mihomo با موفقیت دریافت و آماده شد!' : 'Mihomo Core installed successfully!')
+                : (isPersian ? 'خطا در دریافت هسته Mihomo.' : 'Failed to download core.'),
+          ),
+          backgroundColor: success ? Colors.green : Colors.red,
+        ),
+      );
+    }
+  }
+
+  void _testProxyConnection() async {
     setState(() {
       _isCheckingProxy = true;
       _proxyHealthResult = null;
     });
 
     final res = await _config.checkProxyHealth();
-    setState(() {
-      _isCheckingProxy = false;
-      _proxyHealthResult = res;
-    });
+    if (mounted) {
+      setState(() {
+        _isCheckingProxy = false;
+        _proxyHealthResult = res;
+      });
+    }
   }
 
   void _testBotConnection() async {
@@ -181,19 +278,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
     });
 
     final res = await _config.checkUpdate();
-    setState(() {
-      _isCheckingUpdate = false;
-      if (res['hasUpdate'] == true) {
-        _updateStatus = isPersian
-            ? '🚀 نسخه جدید ${res['latestVersion']} منتشر شده است!'
-            : '🚀 New update ${res['latestVersion']} available!';
-        _updateReleaseUrl = res['releaseUrl'];
-      } else {
-        _updateStatus = isPersian
-            ? '✅ شما از آخرین نسخه (v2.0.0) استفاده می‌کنید.'
-            : '✅ You are running the latest version (v2.0.0).';
-      }
-    });
+    if (mounted) {
+      setState(() {
+        _isCheckingUpdate = false;
+        if (res['hasUpdate'] == true) {
+          _updateStatus = isPersian
+              ? '🚀 نسخه جدید ${res['latestVersion']} منتشر شده است!'
+              : '🚀 New update ${res['latestVersion']} available!';
+          _updateReleaseUrl = res['releaseUrl'];
+        } else {
+          _updateStatus = isPersian
+              ? '✅ شما از آخرین نسخه (v2.0.0) استفاده می‌کنید.'
+              : '✅ You are running the latest version (v2.0.0).';
+        }
+      });
+    }
   }
 
   @override
@@ -202,14 +301,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(isPersian ? 'تنظیمات عمومی، پروکسی و بروزرسانی' : 'General, Network & Update Settings'),
+        title: Text(isPersian ? 'تنظیمات عمومی، پروکسی و هسته' : 'General, Network & Core Settings'),
         actions: [
-          FilledButton.icon(
-            onPressed: _saveSettings,
-            icon: const Icon(Icons.save),
-            label: Text(isPersian ? 'ذخیره تنظیمات' : 'Save Settings'),
+          IconButton(
+            tooltip: isPersian ? 'بازنشانی به پیش‌فرض' : 'Reset to Defaults',
+            icon: const Icon(Icons.restart_alt),
+            onPressed: _resetToDefaults,
           ),
-          const SizedBox(width: 16),
+          IconButton(
+            tooltip: isPersian ? 'ذخیره تنظیمات' : 'Save Settings',
+            icon: const Icon(Icons.save),
+            onPressed: _saveSettingsExplicit,
+          ),
+          const SizedBox(width: 12),
         ],
       ),
       body: ListView(
@@ -220,7 +324,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             elevation: 0,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(14),
-              side: BorderSide(color: Colors.blueAccent.withOpacity(0.35)),
+              side: BorderSide(color: Colors.blueAccent.withOpacity(0.25)),
             ),
             color: Theme.of(context).cardColor,
             child: Padding(
@@ -282,7 +386,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             elevation: 0,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(14),
-              side: BorderSide(color: Colors.greenAccent.withOpacity(0.35)),
+              side: BorderSide(color: Colors.teal.withOpacity(0.25)),
             ),
             color: Theme.of(context).cardColor,
             child: Padding(
@@ -292,18 +396,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 children: [
                   Row(
                     children: [
-                      const Icon(Icons.alt_route, color: Colors.greenAccent, size: 28),
+                      const Icon(Icons.alt_route, color: Colors.tealAccent, size: 28),
                       const SizedBox(width: 12),
                       Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            isPersian ? 'نوع پروکسی شبکه (Network Proxy Mode)' : 'Network Proxy Mode',
+                            isPersian ? 'پروکسی شبکه جهت اتصال به منابع (Proxy for Sources)' : 'Network Proxy Mode',
                             style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
                           ),
                           Text(
                             isPersian
-                                ? 'جهت دور زدن فیلترینگ هنگام دانلود سابسکریپشن‌ها و اتصال به تلگرام'
+                                ? 'جهت دور زدن فیلترینگ هنگام دانلود سابسکریپشن‌ها و اتصال به تلگرام (تست نودها مستقیم انجام می‌شود)'
                                 : 'For bypassing blocking during source fetching and Telegram dispatch',
                             style: TextStyle(color: Colors.grey.shade400, fontSize: 12),
                           ),
@@ -332,7 +436,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ),
                     ],
                     selected: {_networkMode},
-                    onSelectionChanged: (set) => setState(() => _networkMode = set.first),
+                    onSelectionChanged: (set) {
+                      setState(() => _networkMode = set.first);
+                      _autoSaveQuietly();
+                    },
                   ),
                   if (_networkMode != 'direct') ...[
                     const SizedBox(height: 16),
@@ -342,6 +449,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           flex: 3,
                           child: TextField(
                             controller: _proxyHostCtrl,
+                            onChanged: (_) => _autoSaveQuietly(),
                             decoration: InputDecoration(
                               border: const OutlineInputBorder(),
                               labelText: isPersian ? 'آدرس هاست پروکسی' : 'Proxy Host',
@@ -355,6 +463,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           child: TextField(
                             controller: _proxyPortCtrl,
                             keyboardType: TextInputType.number,
+                            onChanged: (_) => _autoSaveQuietly(),
                             decoration: InputDecoration(
                               border: const OutlineInputBorder(),
                               labelText: isPersian ? 'پورت' : 'Port',
@@ -373,7 +482,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         icon: _isCheckingProxy
                             ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
                             : const Icon(Icons.network_check),
-                        label: Text(isPersian ? 'تست اتصال پروکسی و اینترنت (گوگل و تلگرام)' : 'Test Proxy & Internet Health'),
+                        label: Text(isPersian ? 'تست اتصال پروکسی به اینترنت (گوگل و تلگرام)' : 'Test Proxy Health'),
                       ),
                     ],
                   ),
@@ -400,8 +509,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                 Expanded(
                                   child: Text(
                                     _proxyHealthResult!['telegramOk'] == true
-                                        ? (isPersian ? 'تلگرام: متصل (${_proxyHealthResult!['telegramPing']}ms)' : 'Telegram: OK (${_proxyHealthResult!['telegramPing']}ms)')
-                                        : (isPersian ? 'تلگرام: قطع یا مسدود' : 'Telegram: Failed/Blocked'),
+                                        ? (isPersian ? 'تلگرام: متصل (${_proxyHealthResult!['telegramPing']}ms)' : 'Telegram: OK')
+                                        : (isPersian ? 'تلگرام: قطع یا مسدود' : 'Telegram: Blocked'),
                                     style: TextStyle(
                                       fontSize: 13,
                                       fontWeight: FontWeight.bold,
@@ -424,8 +533,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                 Expanded(
                                   child: Text(
                                     _proxyHealthResult!['googleOk'] == true
-                                        ? (isPersian ? 'گوگل: متصل (${_proxyHealthResult!['googlePing']}ms)' : 'Google: OK (${_proxyHealthResult!['googlePing']}ms)')
-                                        : (isPersian ? 'گوگل: قطع یا مسدود' : 'Google: Failed/Blocked'),
+                                        ? (isPersian ? 'گوگل: متصل (${_proxyHealthResult!['googlePing']}ms)' : 'Google: OK')
+                                        : (isPersian ? 'گوگل: قطع یا مسدود' : 'Google: Blocked'),
                                     style: TextStyle(
                                       fontSize: 13,
                                       fontWeight: FontWeight.bold,
@@ -446,12 +555,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           const SizedBox(height: 16),
 
-          // Section 3: Telegram Sender with Custom Message
+          // Section 3: Telegram Sender
           Card(
             elevation: 0,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(14),
-              side: BorderSide(color: Colors.lightBlueAccent.withOpacity(0.35)),
+              side: BorderSide(color: Colors.lightBlueAccent.withOpacity(0.25)),
             ),
             color: Theme.of(context).cardColor,
             child: Padding(
@@ -483,7 +592,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ),
                       Switch(
                         value: _telegramBotEnabled,
-                        onChanged: (v) => setState(() => _telegramBotEnabled = v),
+                        onChanged: (v) {
+                          setState(() => _telegramBotEnabled = v);
+                          _autoSaveQuietly();
+                        },
                       ),
                     ],
                   ),
@@ -492,6 +604,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     TextField(
                       controller: _botTokenCtrl,
                       obscureText: true,
+                      onChanged: (_) => _autoSaveQuietly(),
                       decoration: InputDecoration(
                         border: const OutlineInputBorder(),
                         labelText: isPersian ? 'توکن ربات تلگرام (Bot Token)' : 'Bot Token',
@@ -502,6 +615,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     const SizedBox(height: 12),
                     TextField(
                       controller: _channelIdCtrl,
+                      onChanged: (_) => _autoSaveQuietly(),
                       decoration: InputDecoration(
                         border: const OutlineInputBorder(),
                         labelText: isPersian ? 'آیدی کانال مقصد (Channel ID / Username)' : 'Channel Username / ID',
@@ -510,7 +624,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ),
                     ),
                     const SizedBox(height: 12),
-                    // Custom Telegram Message Structure Selection
                     Text(
                       isPersian ? 'نحوه و محل درج متن سفارشی در پیام ارسالی کانال:' : 'Custom Message Placement:',
                       style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
@@ -536,13 +649,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         ),
                       ],
                       selected: {_messageMode},
-                      onSelectionChanged: (set) => setState(() => _messageMode = set.first),
+                      onSelectionChanged: (set) {
+                        setState(() => _messageMode = set.first);
+                        _autoSaveQuietly();
+                      },
                     ),
                     const SizedBox(height: 12),
                     if (_messageMode == 'header_only' || _messageMode == 'both') ...[
                       TextField(
                         controller: _headerTextCtrl,
                         maxLines: 2,
+                        onChanged: (_) => _autoSaveQuietly(),
                         decoration: InputDecoration(
                           border: const OutlineInputBorder(),
                           labelText: isPersian ? 'متن خط اول پیام (Header / هدر سفارشی)' : 'Header Text (First Line)',
@@ -556,6 +673,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       TextField(
                         controller: _footerTextCtrl,
                         maxLines: 2,
+                        onChanged: (_) => _autoSaveQuietly(),
                         decoration: InputDecoration(
                           border: const OutlineInputBorder(),
                           labelText: isPersian ? 'متن آخرین خط پیام (Footer / فوتر و امضا)' : 'Footer Text (Last Line)',
@@ -565,41 +683,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ),
                       const SizedBox(height: 12),
                     ],
-                    if (_messageMode == 'no_text') ...[
-                      Container(
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          color: Colors.blueGrey.withOpacity(0.15),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Row(
-                          children: [
-                            const Icon(Icons.info_outline, size: 18, color: Colors.blueGrey),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                isPersian
-                                    ? 'فایل‌ها و گزارش آماری بدون هیچ متن یا کپشن اضافی ارسال خواهند شد.'
-                                    : 'Files and reports will be sent cleanly without custom header/footer.',
-                                style: const TextStyle(fontSize: 12),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                    ],
                     CheckboxListTile(
                       title: Text(isPersian ? 'ارسال فایل‌های خروجی (کلش، ایکس‌ری و سینگ‌باکس)' : 'Send Export Files'),
                       value: _sendFiles,
-                      onChanged: (v) => setState(() => _sendFiles = v ?? true),
+                      onChanged: (v) {
+                        setState(() => _sendFiles = v ?? true);
+                        _autoSaveQuietly();
+                      },
                       controlAffinity: ListTileControlAffinity.leading,
                       contentPadding: EdgeInsets.zero,
                     ),
                     CheckboxListTile(
                       title: Text(isPersian ? 'ارسال گزارش آماری خلاصه نتایج' : 'Send Summary Stats Report'),
                       value: _sendSummary,
-                      onChanged: (v) => setState(() => _sendSummary = v ?? true),
+                      onChanged: (v) {
+                        setState(() => _sendSummary = v ?? true);
+                        _autoSaveQuietly();
+                      },
                       controlAffinity: ListTileControlAffinity.leading,
                       contentPadding: EdgeInsets.zero,
                     ),
@@ -627,12 +727,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           const SizedBox(height: 16),
 
-          // Section 4: CPU Hardware Architecture Profiles
+          // Section 4: Mihomo Core Manager & CPU Architecture
           Card(
             elevation: 0,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(14),
-              side: BorderSide(color: Colors.orangeAccent.withOpacity(0.35)),
+              side: BorderSide(color: Colors.orangeAccent.withOpacity(0.25)),
             ),
             color: Theme.of(context).cardColor,
             child: Padding(
@@ -644,22 +744,110 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     children: [
                       const Icon(Icons.memory, color: Colors.orangeAccent, size: 28),
                       const SizedBox(width: 12),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            isPersian ? 'پروفایل معماری پردازنده میهومو (CPU Architecture)' : 'CPU Architecture Profile',
-                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                          ),
-                          Text(
-                            isPersian ? 'معماری تشخیص داده شده سیستم شما: $_detectedArch' : 'Detected System Architecture: $_detectedArch',
-                            style: TextStyle(color: Colors.grey.shade400, fontSize: 12),
-                          ),
-                        ],
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              isPersian ? 'مدیریت و بروزرسانی هسته Mihomo' : 'Mihomo Core Manager',
+                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                            ),
+                            Text(
+                              isPersian
+                                  ? 'تشخیص نسخه هسته، بررسی انتشارهای MetaCubeX و دانلود مستقیم'
+                                  : 'Inspect local binary, compare with upstream MetaCubeX and download',
+                              style: TextStyle(color: Colors.grey.shade400, fontSize: 12),
+                            ),
+                          ],
+                        ),
+                      ),
+                      FilledButton.tonalIcon(
+                        onPressed: _isCheckingCore ? null : _checkCoreStatusExplicit,
+                        icon: _isCheckingCore
+                            ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                            : const Icon(Icons.refresh),
+                        label: Text(isPersian ? 'بررسی هسته' : 'Check Core'),
                       ),
                     ],
                   ),
                   const Divider(height: 24),
+                  if (_coreStatus != null) ...[
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.black26,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: Colors.grey.withOpacity(0.2)),
+                      ),
+                      child: Column(
+                        children: [
+                          Row(
+                            children: [
+                              Icon(
+                                _coreStatus!['installed'] == true ? Icons.check_circle : Icons.warning_amber_rounded,
+                                color: _coreStatus!['installed'] == true ? Colors.greenAccent : Colors.orangeAccent,
+                                size: 20,
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                isPersian ? 'نسخه نصب‌شده در سیستم: ' : 'Installed version: ',
+                                style: const TextStyle(fontSize: 13),
+                              ),
+                              Text(
+                                '${_coreStatus!['installedVersion']}',
+                                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                              ),
+                              const Spacer(),
+                              Text(
+                                isPersian ? 'آخرین انتشار مخزن: ' : 'Upstream: ',
+                                style: const TextStyle(fontSize: 13),
+                              ),
+                              Text(
+                                '${_coreStatus!['latestVersion']}',
+                                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.blueAccent),
+                              ),
+                            ],
+                          ),
+                          if (_coreStatus!['downloadUrl'] != null && (_coreStatus!['downloadUrl'] as String).isNotEmpty) ...[
+                            const SizedBox(height: 10),
+                            Row(
+                              children: [
+                                FilledButton.icon(
+                                  onPressed: _isDownloadingCore ? null : _downloadCore,
+                                  icon: _isDownloadingCore
+                                      ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                                      : const Icon(Icons.download),
+                                  label: Text(
+                                    _coreStatus!['installed'] == true
+                                        ? (isPersian ? 'بروزرسانی هسته به آخرین نسخه' : 'Update Core')
+                                        : (isPersian ? 'دانلود و نصب هسته Mihomo' : 'Download Mihomo Core'),
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                if (_isDownloadingCore)
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        LinearProgressIndicator(value: _coreDownloadProgress),
+                                        const SizedBox(height: 4),
+                                        Text(_coreDownloadMsg, style: const TextStyle(fontSize: 11)),
+                                      ],
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                  ],
+                  Text(
+                    isPersian ? 'انتخاب معماری پردازنده جهت دریافت هسته (سیستم شما: $_detectedArch):' : 'Processor Architecture Profile:',
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                  ),
+                  const SizedBox(height: 8),
                   RadioListTile<String>(
                     title: Text(isPersian ? '۱. windows-amd64 (مدرن با AVX/AVX2 - حداکثر بازدهی)' : '1. windows-amd64 (Modern AVX/AVX2)'),
                     subtitle: Text(
@@ -668,7 +856,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                     value: 'windows-amd64',
                     groupValue: _preferredArch,
-                    onChanged: (v) => setState(() => _preferredArch = v!),
+                    onChanged: (v) {
+                      setState(() => _preferredArch = v!);
+                      _autoSaveQuietly();
+                    },
                   ),
                   RadioListTile<String>(
                     title: Text(isPersian ? '۲. windows-amd64-compatible (سازگاری عمومی بدون کرش)' : '2. windows-amd64-compatible'),
@@ -678,7 +869,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                     value: 'windows-amd64-compatible',
                     groupValue: _preferredArch,
-                    onChanged: (v) => setState(() => _preferredArch = v!),
+                    onChanged: (v) {
+                      setState(() => _preferredArch = v!);
+                      _autoSaveQuietly();
+                    },
                   ),
                   RadioListTile<String>(
                     title: Text(isPersian ? '۳. windows-arm64 (سرفیس پرو و پردازنده‌های اسنپ‌دراگون)' : '3. windows-arm64 (Surface / Snapdragon)'),
@@ -688,7 +882,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                     value: 'windows-arm64',
                     groupValue: _preferredArch,
-                    onChanged: (v) => setState(() => _preferredArch = v!),
+                    onChanged: (v) {
+                      setState(() => _preferredArch = v!);
+                      _autoSaveQuietly();
+                    },
                   ),
                   RadioListTile<String>(
                     title: Text(isPersian ? '۴. windows-386 (سیستم‌های ۳۲ بیتی)' : '4. windows-386 (32-bit Legacy)'),
@@ -698,7 +895,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                     value: 'windows-386',
                     groupValue: _preferredArch,
-                    onChanged: (v) => setState(() => _preferredArch = v!),
+                    onChanged: (v) {
+                      setState(() => _preferredArch = v!);
+                      _autoSaveQuietly();
+                    },
                   ),
                 ],
               ),

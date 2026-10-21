@@ -2,6 +2,7 @@ package parse
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"regexp"
@@ -11,24 +12,96 @@ import (
 	"github.com/10ium/freedom-config-collector/engine/internal/model"
 )
 
-// SupportedSchemes contains the complete list of 43 URI protocol schemes supported by cf_decryptor_bot.
+// SupportedSchemes contains the complete list of 43+ URI protocol schemes supported by cf_decryptor_bot.
 var SupportedSchemes = []string{
 	"vless", "vmess", "trojan", "ss", "ssr", "hysteria2", "hy2", "hysteria",
 	"wireguard", "wg", "masque", "tuic", "snell", "shadowtls", "anytls",
-	"ssh", "socks5", "socks", "http", "https", "vpn", "naive", "tailcat",
+	"ssh", "socks5", "socks", "socks4", "http", "https", "vpn", "naive", "tailcat",
 	// DNS tunnel protocols
-	"dns", "nm-dns", "nm-vless", "slipnet-enc", "slipnet", "slipstream",
-	"dnstt", "dnst", "dnstunnel", "vaydns", "stormdns", "cottendns",
+	"soar", "cottendns", "whitedns", "dnstt", "dnst", "dnstunnel", "vaydns", "stormdns",
 	"masterdns", "masterdnsvpn", "noizdns", "slowdns", "ssh-dns", "dns-ssh",
-	"ssh-over-dns", "whitedns", "tg", "ssc", "darktunnel",
+	"ssh-over-dns", "slipnet-enc", "slipnet", "slipstream", "nm-dns", "nm-vless", "dns",
+	// Telegram & Tunnel containers
+	"tg", "ssc", "darktunnel",
 }
 
 var dnsProtocolsSet = map[string]bool{
-	"dns": true, "nm-dns": true, "nm-vless": true, "slipnet-enc": true,
-	"slipnet": true, "slipstream": true, "dnstt": true, "dnst": true,
-	"dnstunnel": true, "vaydns": true, "stormdns": true, "cottendns": true,
-	"masterdns": true, "masterdnsvpn": true, "noizdns": true, "slowdns": true,
-	"ssh-dns": true, "dns-ssh": true, "ssh-over-dns": true, "whitedns": true,
+	"soar": true, "cottendns": true, "whitedns": true, "dnstt": true, "dnst": true,
+	"dnstunnel": true, "vaydns": true, "stormdns": true, "masterdns": true,
+	"masterdnsvpn": true, "noizdns": true, "slowdns": true, "ssh-dns": true,
+	"dns-ssh": true, "ssh-over-dns": true, "slipnet-enc": true, "slipnet": true,
+	"slipstream": true, "nm-dns": true, "nm-vless": true, "dns": true,
+}
+
+var telegramProtocolsSet = map[string]bool{
+	"tg": true, "mtproto": true, "tg-socks": true,
+}
+
+type whiteDNSProfilePayload struct {
+	Profile struct {
+		ID        string   `json:"id"`
+		Name      string   `json:"name"`
+		Resolvers []string `json:"resolvers"`
+		Server    struct {
+			Domain           string `json:"domain"`
+			PublicKey        string `json:"public_key"`
+			EncryptionKey    string `json:"encryption_key"`
+			EncryptionMethod int    `json:"encryption_method"`
+		} `json:"server"`
+		Engine       string         `json:"engine"`
+		SoarSettings map[string]any `json:"soarSettings"`
+	} `json:"profile"`
+	Schema  string `json:"schema"`
+	Version int    `json:"version"`
+}
+
+func parseWhiteDNSProfile(rawURI string, scheme string) (*model.Node, error) {
+	prefix := scheme + "://"
+	trimmed := strings.TrimPrefix(rawURI, prefix)
+	if idx := strings.IndexAny(trimmed, "#?/"); idx != -1 {
+		trimmed = trimmed[:idx]
+	}
+
+	decoded, ok := tryDecodeBase64(trimmed)
+	if !ok {
+		if b, err := base64.RawURLEncoding.DecodeString(trimmed); err == nil {
+			decoded = string(b)
+			ok = true
+		}
+	}
+
+	if ok && strings.Contains(decoded, `"profile"`) {
+		var wp whiteDNSProfilePayload
+		if err := json.Unmarshal([]byte(decoded), &wp); err == nil && wp.Profile.Server.Domain != "" {
+			name := wp.Profile.Name
+			if name == "" {
+				name = "WhiteDNS-" + strings.ToUpper(scheme) + "-" + wp.Profile.Server.Domain
+			}
+			pubKey := wp.Profile.Server.PublicKey
+			pass := wp.Profile.Server.EncryptionKey
+			method := ""
+			if wp.Profile.Server.EncryptionMethod > 0 {
+				method = fmt.Sprintf("method-%d", wp.Profile.Server.EncryptionMethod)
+			}
+			return &model.Node{
+				Protocol:    scheme,
+				Category:    "dns_tunnel",
+				IsDNSTunnel: true,
+				Name:        CleanText(name),
+				Server:      wp.Profile.Server.Domain,
+				Domain:      wp.Profile.Server.Domain,
+				Port:        53,
+				DNSTTPubKey: pubKey,
+				PublicKey:   pubKey,
+				Password:    pass,
+				Method:      method,
+				Resolvers:   wp.Profile.Resolvers,
+				Network:     "udp",
+				UDP:         true,
+			}, nil
+		}
+	}
+	return nil, fmt.Errorf("not a valid whitedns json profile")
 }
 
 // BuildSchemesRegex generates a consolidated regular expression matching all supported protocol links.
@@ -43,6 +116,17 @@ func BuildSchemesRegex() *regexp.Regexp {
 
 // ParseGenericURI parses extended protocols: snell, shadowtls, anytls, ssh, masque, ssr, and dns-tunnels.
 func ParseGenericURI(rawURI string) (*model.Node, error) {
+	// 1. Check WhiteDNS JSON profile schemes first
+	lowScheme := ""
+	if idx := strings.Index(rawURI, "://"); idx != -1 {
+		lowScheme = strings.ToLower(rawURI[:idx])
+	}
+	if lowScheme == "soar" || lowScheme == "cottendns" || lowScheme == "whitedns" {
+		if node, err := parseWhiteDNSProfile(rawURI, lowScheme); err == nil {
+			return node, nil
+		}
+	}
+
 	u, err := url.Parse(rawURI)
 	if err != nil {
 		return nil, err
@@ -67,6 +151,7 @@ func ParseGenericURI(rawURI string) (*model.Node, error) {
 		}
 		return &model.Node{
 			Protocol:    scheme,
+			Category:    "dns_tunnel",
 			Name:        name,
 			Server:      server,
 			Port:        port,

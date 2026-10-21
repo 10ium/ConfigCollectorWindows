@@ -7,6 +7,7 @@ import 'screens/tester_screen.dart';
 import 'screens/results_screen.dart';
 import 'screens/export_screen.dart';
 import 'screens/scheduler_screen.dart';
+import 'screens/logs_screen.dart';
 import 'screens/settings_screen.dart';
 
 void main() {
@@ -81,6 +82,7 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
     ResultsScreen(),
     ExportScreen(),
     SchedulerScreen(),
+    LogsScreen(),
     SettingsScreen(),
   ];
 
@@ -119,6 +121,11 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
         icon: const Icon(Icons.alarm_outlined),
         selectedIcon: const Icon(Icons.alarm),
         label: isPersian ? 'زمان‌بندی' : 'Scheduler',
+      ),
+      NavigationDestination(
+        icon: const Icon(Icons.receipt_long_outlined),
+        selectedIcon: const Icon(Icons.receipt_long),
+        label: isPersian ? 'لاگ زنده' : 'Live Logs',
       ),
       NavigationDestination(
         icon: const Icon(Icons.settings_outlined),

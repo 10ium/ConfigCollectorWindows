@@ -71,11 +71,13 @@ type Node struct {
 	ProxyServer  string `json:"proxy_server,omitempty"`
 	ProxyPort    int    `json:"proxy_port,omitempty"`
 
-	// DNS Tunnel specific (dnstt, slipstream, slowdns, etc.)
-	IsDNSTunnel  bool     `json:"is_dns_tunnel,omitempty"`
-	Domain       string   `json:"domain,omitempty"`
-	Resolvers    []string `json:"resolvers,omitempty"`
-	DNSTTPubKey  string   `json:"dnstt_pubkey,omitempty"`
+	// DNS Tunnel specific (soar, cottendns, whitedns, dnstt, slipstream, slowdns, etc.)
+	IsDNSTunnel     bool     `json:"is_dns_tunnel,omitempty"`
+	IsTelegramProxy bool     `json:"is_telegram_proxy,omitempty"`
+	Category        string   `json:"category,omitempty"` // "mihomo", "dns_tunnel", "telegram"
+	Domain          string   `json:"domain,omitempty"`
+	Resolvers       []string `json:"resolvers,omitempty"`
+	DNSTTPubKey     string   `json:"dnstt_pubkey,omitempty"`
 
 	// OpenVPN specific
 	Proto        string `json:"proto,omitempty"` // udp or tcp
@@ -207,4 +209,29 @@ func (n *Node) FormattedName(template string) string {
 		res = strings.ReplaceAll(res, "{name}", n.Name)
 	}
 	return strings.TrimSpace(res)
+}
+
+// GetCategory returns the logical protocol classification: "mihomo", "dns_tunnel", or "telegram".
+func (n *Node) GetCategory() string {
+	if n.Category != "" {
+		return n.Category
+	}
+	if n.IsTelegramProxy || n.Protocol == "tg" || n.Protocol == "mtproto" || n.Protocol == "tg-socks" {
+		return "telegram"
+	}
+	if n.IsDNSTunnel {
+		return "dns_tunnel"
+	}
+	p := strings.ToLower(n.Protocol)
+	switch p {
+	case "soar", "cottendns", "whitedns", "dnstt", "slowdns", "dnst", "dnstunnel",
+		"slipnet", "slipnet-enc", "slipstream", "nm-dns", "nm-vless", "vaydns",
+		"stormdns", "masterdns", "masterdnsvpn", "noizdns", "ssh-dns", "dns-ssh",
+		"ssh-over-dns", "dns":
+		return "dns_tunnel"
+	case "tg", "mtproto", "tg-socks", "telegram":
+		return "telegram"
+	default:
+		return "mihomo"
+	}
 }

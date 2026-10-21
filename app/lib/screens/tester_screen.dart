@@ -56,6 +56,7 @@ class _TesterScreenState extends State<TesterScreen> {
   // Gemini AI settings
   int _geminiLevel = 2;
   String _geminiTarget = 'both'; // 'gemini_web', 'ai_studio', 'both'
+  int _geminiConcurrency = 3;
   late TextEditingController _geminiApiKeyCtrl;
   bool _isGoogleLoggedIn = false;
   String _googleAccountEmail = '';
@@ -98,6 +99,7 @@ class _TesterScreenState extends State<TesterScreen> {
     _t3Gemini = gemini['enabled'] ?? true;
     _geminiLevel = gemini['level'] ?? 2;
     _geminiTarget = gemini['target'] ?? 'both';
+    _geminiConcurrency = gemini['concurrency'] ?? 3;
     _geminiApiKeyCtrl.text = gemini['api_key'] ?? '';
     _isGoogleLoggedIn = gemini['logged_in'] ?? false;
     _googleAccountEmail = gemini['account_email'] ?? '';
@@ -139,8 +141,7 @@ class _TesterScreenState extends State<TesterScreen> {
     super.dispose();
   }
 
-  void _saveSettings() {
-    final isPersian = Localizations.localeOf(context).languageCode == 'fa';
+  void _autoSaveQuietly() {
     final smartSeconds = ConfigService.parseSmartTime(_timeoutCtrl.text, _timeoutUnit);
 
     _config.updateNestedSetting('tests', 'ping', 'enabled', _t1Ping);
@@ -160,6 +161,7 @@ class _TesterScreenState extends State<TesterScreen> {
     _config.updateNestedSetting('tests', 'gemini', 'enabled', _t3Gemini);
     _config.updateNestedSetting('tests', 'gemini', 'level', _geminiLevel);
     _config.updateNestedSetting('tests', 'gemini', 'target', _geminiTarget);
+    _config.updateNestedSetting('tests', 'gemini', 'concurrency', _geminiConcurrency);
     _config.updateNestedSetting('tests', 'gemini', 'api_key', _geminiApiKeyCtrl.text.trim());
     _config.updateNestedSetting('tests', 'gemini', 'logged_in', _isGoogleLoggedIn);
     _config.updateNestedSetting('tests', 'gemini', 'account_email', _googleAccountEmail);
@@ -186,13 +188,16 @@ class _TesterScreenState extends State<TesterScreen> {
     _config.updateNestedSetting('tests', 'geo_flag', 'enabled', _t2Geo);
     _config.updateNestedSetting('tests', 'udp', 'enabled', _t6UDP);
     _config.updateNestedSetting('tests', 'fraud_score', 'enabled', _t9Fraud);
+  }
 
+  void _saveSettingsExplicit() {
+    _autoSaveQuietly();
     _config.saveSettings();
-
+    final isPersian = Localizations.localeOf(context).languageCode == 'fa';
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(isPersian ? 'تنظیمات شخصی‌سازی تست‌ها ذخیره شد.' : 'Test settings saved.'),
-        backgroundColor: Colors.green,
+        content: Text(isPersian ? 'تنظیمات تست‌ها ذخیره شد.' : 'Test settings saved.'),
+        backgroundColor: Colors.teal,
       ),
     );
   }
@@ -217,7 +222,7 @@ class _TesterScreenState extends State<TesterScreen> {
           title: Text(isPersian ? 'ورود به حساب گوگل' : 'Sign in to Google Account'),
           content: Text(
             isPersian
-                ? 'پنجره مرورگر کروم/ایج در یک پروفایل امن و ایزوله اختصاصی باز خواهد شد تا لاگین رسمی را انجام دهید. هیچ رمز عبوری در برنامه ذخیره نمی‌شود و صرفاً سشن احراز هویت جهت بررسی تحریم جمنای استفاده می‌گردد.'
+                ? 'پنجره مرورگر کروم/ایج در یک پروفایل امن و ایزوله اختصاصی باز خواهد شد تا لاگین رسمی را انجام دهید. هیچ رمز عبوری در برنامه ذخیره نمی‌شود و صرفاً کوکی‌های نشست جهت بررسی تحریم جمنای استفاده می‌گردد.'
                 : 'A dedicated browser profile will launch to capture the session for Gemini region checking.',
           ),
           actions: [
@@ -230,16 +235,25 @@ class _TesterScreenState extends State<TesterScreen> {
                 Navigator.pop(ctx);
                 await _config.launchGoogleSignIn();
                 setState(() {
-                  _isGoogleLoggedIn = true;
+                  _isGoogleLoggedIn = _config.isGoogleLoggedIn;
                   _googleAccountEmail = _config.googleAccountEmail;
                 });
                 if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(isPersian ? 'ورود با موفقیت انجام شد! سشن گوگل برای تست‌ها فعال گردید.' : 'Logged in successfully!'),
-                      backgroundColor: Colors.green,
-                    ),
-                  );
+                  if (_config.isGoogleLoggedIn) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(isPersian ? 'ورود با موفقیت تایید شد ($_googleAccountEmail)!' : 'Logged in successfully!'),
+                        backgroundColor: Colors.green,
+                      ),
+                    );
+                  } else {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(isPersian ? 'پنجره مرورگر قبل از احراز هویت بسته شد یا لاگین تایید نگردید.' : 'Browser closed before sign-in completed.'),
+                        backgroundColor: Colors.orange,
+                      ),
+                    );
+                  }
                 }
               },
               icon: const Icon(Icons.login),
@@ -251,6 +265,62 @@ class _TesterScreenState extends State<TesterScreen> {
     }
   }
 
+  Widget _buildSteppedSlider({
+    required double value,
+    required double min,
+    required double max,
+    required int divisions,
+    required String label,
+    required ValueChanged<double> onChanged,
+    double step = 1.0,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
+        const SizedBox(height: 4),
+        Row(
+          children: [
+            IconButton(
+              icon: const Icon(Icons.remove_circle_outline, size: 20),
+              tooltip: '-$step',
+              onPressed: value > min
+                  ? () {
+                      final next = (value - step).clamp(min, max);
+                      onChanged(next);
+                      _autoSaveQuietly();
+                    }
+                  : null,
+            ),
+            Expanded(
+              child: Slider(
+                min: min,
+                max: max,
+                divisions: divisions,
+                value: value.clamp(min, max),
+                onChanged: (v) {
+                  onChanged(v);
+                  _autoSaveQuietly();
+                },
+              ),
+            ),
+            IconButton(
+              icon: const Icon(Icons.add_circle_outline, size: 20),
+              tooltip: '+$step',
+              onPressed: value < max
+                  ? () {
+                      final next = (value + step).clamp(min, max);
+                      onChanged(next);
+                      _autoSaveQuietly();
+                    }
+                  : null,
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final isPersian = Localizations.localeOf(context).languageCode == 'fa';
@@ -259,12 +329,12 @@ class _TesterScreenState extends State<TesterScreen> {
       appBar: AppBar(
         title: Text(isPersian ? 'شخصی‌سازی پیشرفته تست‌ها' : 'Advanced Test Funnel Customization'),
         actions: [
-          FilledButton.icon(
-            onPressed: _saveSettings,
+          IconButton(
+            tooltip: isPersian ? 'ذخیره تنظیمات' : 'Save Settings',
+            onPressed: _saveSettingsExplicit,
             icon: const Icon(Icons.save),
-            label: Text(isPersian ? 'ذخیره تنظیمات' : 'Save Settings'),
           ),
-          const SizedBox(width: 16),
+          const SizedBox(width: 12),
         ],
       ),
       body: ListView(
@@ -275,7 +345,7 @@ class _TesterScreenState extends State<TesterScreen> {
             elevation: 0,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(14),
-              side: BorderSide(color: Colors.purple.withOpacity(0.35)),
+              side: BorderSide(color: Colors.purple.withOpacity(0.25)),
             ),
             color: Theme.of(context).cardColor,
             child: Padding(
@@ -295,12 +365,12 @@ class _TesterScreenState extends State<TesterScreen> {
                             children: [
                               Text(
                                 isPersian ? 'تست چندباره نودها با وقفه (Multi-Round Testing)' : 'Multi-Round Testing',
-                                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.purpleAccent),
+                                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
                               ),
                               const SizedBox(height: 2),
                               Text(
                                 isPersian
-                                    ? 'برای جلوگیری از حذف اشتباهی کانفیگ‌های سالم در شرایط سخت شبکه، کل لیست چند بار با وقفه تست می‌شود.'
+                                    ? 'برای جلوگیری از حذف اشتباهی کانفیگ‌ها در نوسانات شبکه، کل لیست چند بار با وقفه تست می‌شود.'
                                     : 'Repeat the test across multiple rounds with cooldown to avoid false negatives.',
                                 style: TextStyle(color: Colors.grey.shade400, fontSize: 12),
                               ),
@@ -310,7 +380,10 @@ class _TesterScreenState extends State<TesterScreen> {
                       ),
                       Switch(
                         value: _roundsEnabled,
-                        onChanged: (v) => setState(() => _roundsEnabled = v),
+                        onChanged: (v) {
+                          setState(() => _roundsEnabled = v);
+                          _autoSaveQuietly();
+                        },
                       ),
                     ],
                   ),
@@ -332,25 +405,24 @@ class _TesterScreenState extends State<TesterScreen> {
                                   ButtonSegment(value: 5, label: Text('۵ دور')),
                                 ],
                                 selected: {_roundsCount},
-                                onSelectionChanged: (set) => setState(() => _roundsCount = set.first),
+                                onSelectionChanged: (set) {
+                                  setState(() => _roundsCount = set.first);
+                                  _autoSaveQuietly();
+                                },
                               ),
                             ],
                           ),
                         ),
                         const SizedBox(width: 24),
                         Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(isPersian ? 'وقفه بین هر دور: $_intervalBetweenRoundsSec ثانیه' : 'Cooldown: $_intervalBetweenRoundsSec s'),
-                              Slider(
-                                min: 5,
-                                max: 60,
-                                divisions: 11,
-                                value: _intervalBetweenRoundsSec.toDouble(),
-                                onChanged: (v) => setState(() => _intervalBetweenRoundsSec = v.toInt()),
-                              ),
-                            ],
+                          child: _buildSteppedSlider(
+                            value: _intervalBetweenRoundsSec.toDouble(),
+                            min: 5,
+                            max: 60,
+                            divisions: 55,
+                            label: isPersian ? 'وقفه بین هر دور: $_intervalBetweenRoundsSec ثانیه' : 'Cooldown: $_intervalBetweenRoundsSec s',
+                            onChanged: (v) => setState(() => _intervalBetweenRoundsSec = v.toInt()),
+                            step: 1.0,
                           ),
                         ),
                       ],
@@ -359,7 +431,7 @@ class _TesterScreenState extends State<TesterScreen> {
                     const SizedBox(height: 8),
                     Text(
                       isPersian
-                          ? 'تست چند مرحله‌ای خاموش است؛ نودها صرفاً در ۱ دور سریع و بدون وقفه ارزیابی می‌شوند.'
+                          ? 'تست چند مرحله‌ای خاموش است؛ نودها در ۱ دور ارزیابی می‌شوند.'
                           : 'Multi-round testing disabled: nodes are tested in a single fast round.',
                       style: TextStyle(fontSize: 12, color: Colors.grey.shade400),
                     ),
@@ -375,7 +447,7 @@ class _TesterScreenState extends State<TesterScreen> {
             elevation: 0,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(14),
-              side: BorderSide(color: Colors.blue.withOpacity(0.35)),
+              side: BorderSide(color: Colors.blue.withOpacity(0.25)),
             ),
             color: Theme.of(context).cardColor,
             child: Padding(
@@ -407,7 +479,10 @@ class _TesterScreenState extends State<TesterScreen> {
                       ),
                       Switch(
                         value: _t1Ping,
-                        onChanged: (v) => setState(() => _t1Ping = v),
+                        onChanged: (v) {
+                          setState(() => _t1Ping = v);
+                          _autoSaveQuietly();
+                        },
                       ),
                     ],
                   ),
@@ -467,12 +542,14 @@ class _TesterScreenState extends State<TesterScreen> {
                             _pingUrl = val;
                             _customPingCtrl.text = val;
                           });
+                          _autoSaveQuietly();
                         }
                       },
                     ),
                     const SizedBox(height: 12),
                     TextField(
                       controller: _customPingCtrl,
+                      onChanged: (_) => _autoSaveQuietly(),
                       decoration: InputDecoration(
                         border: const OutlineInputBorder(),
                         labelText: isPersian ? 'یا وارد کردن آدرس سفارشی تست تاخیر (Custom Ping URL)' : 'Custom Ping URL',
@@ -486,7 +563,7 @@ class _TesterScreenState extends State<TesterScreen> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text(isPersian ? 'مهلت تست (Timeout):' : 'Test Timeout:'),
+                              Text(isPersian ? 'مهلت تست:' : 'Test Timeout:'),
                               const SizedBox(height: 8),
                               Row(
                                 children: [
@@ -494,6 +571,7 @@ class _TesterScreenState extends State<TesterScreen> {
                                     flex: 2,
                                     child: TextField(
                                       controller: _timeoutCtrl,
+                                      onChanged: (_) => _autoSaveQuietly(),
                                       decoration: InputDecoration(
                                         border: const OutlineInputBorder(),
                                         hintText: isPersian ? 'مثلاً ۳ یا ۵' : '3 or 5',
@@ -510,7 +588,10 @@ class _TesterScreenState extends State<TesterScreen> {
                                         DropdownMenuItem(value: 'دقیقه', child: Text('دقیقه')),
                                         DropdownMenuItem(value: 'ساعت', child: Text('ساعت')),
                                       ],
-                                      onChanged: (v) => setState(() => _timeoutUnit = v!),
+                                      onChanged: (v) {
+                                        setState(() => _timeoutUnit = v!);
+                                        _autoSaveQuietly();
+                                      },
                                     ),
                                   ),
                                 ],
@@ -519,20 +600,16 @@ class _TesterScreenState extends State<TesterScreen> {
                           ),
                         ),
                         const SizedBox(width: 16),
-                        // Concurrency with high limit and warning
+                        // Concurrency slider
                         Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(isPersian ? 'تعداد تست همزمان (Concurrency): $_concurrency' : 'Concurrency: $_concurrency'),
-                              Slider(
-                                min: 5,
-                                max: 1000,
-                                divisions: 199,
-                                value: _concurrency.toDouble(),
-                                onChanged: (v) => setState(() => _concurrency = v.toInt()),
-                              ),
-                            ],
+                          child: _buildSteppedSlider(
+                            value: _concurrency.toDouble(),
+                            min: 1,
+                            max: 1000,
+                            divisions: 999,
+                            label: isPersian ? 'تعداد تست همزمان (Concurrency): $_concurrency' : 'Concurrency: $_concurrency',
+                            onChanged: (v) => setState(() => _concurrency = v.toInt()),
+                            step: 1.0,
                           ),
                         ),
                       ],
@@ -542,9 +619,9 @@ class _TesterScreenState extends State<TesterScreen> {
                       Container(
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
-                          color: Colors.amber.withOpacity(0.15),
+                          color: Colors.amber.withOpacity(0.12),
                           borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: Colors.amber.withOpacity(0.4)),
+                          border: Border.all(color: Colors.amber.withOpacity(0.3)),
                         ),
                         child: Row(
                           children: [
@@ -553,7 +630,7 @@ class _TesterScreenState extends State<TesterScreen> {
                             Expanded(
                               child: Text(
                                 isPersian
-                                    ? 'توجه: همزمانی بالای ۲۰۰ نود نیازمند پردازنده قوی و اینترنت پایدار (مانند فیبر نوری) است؛ در سیستم‌های معمولی ممکن است باعث اشباع سوکت‌ها یا کندی شود.'
+                                    ? '⚠️ هشدار همزمانی بالا: همزمانی بالای ۲۰۰ نود نیازمند پردازنده قوی و اینترنت پرسرعت پایدار (مانند فیبر نوری) است. در سیستم‌های معمولی ممکن است باعث اشباع سوکت‌ها یا کندی شود.'
                                     : 'Warning: Concurrency over 200 requires high-end hardware and high-bandwidth fiber connection.',
                                 style: const TextStyle(fontSize: 12, color: Colors.amber),
                               ),
@@ -563,13 +640,14 @@ class _TesterScreenState extends State<TesterScreen> {
                       ),
                     ],
                     const SizedBox(height: 12),
-                    Text(isPersian ? 'سقف حداکثر تاخیر مجاز: ${_maxPingMs.toInt()} میلی‌ثانیه' : 'Max Latency: ${_maxPingMs.toInt()} ms'),
-                    Slider(
-                      min: 300,
-                      max: 3000,
-                      divisions: 27,
+                    _buildSteppedSlider(
                       value: _maxPingMs,
+                      min: 100,
+                      max: 3000,
+                      divisions: 2900,
+                      label: isPersian ? 'سقف حداکثر تاخیر مجاز: ${_maxPingMs.toInt()} میلی‌ثانیه' : 'Max Latency: ${_maxPingMs.toInt()} ms',
                       onChanged: (v) => setState(() => _maxPingMs = v),
+                      step: 5.0,
                     ),
                   ],
                 ],
@@ -583,7 +661,7 @@ class _TesterScreenState extends State<TesterScreen> {
             elevation: 0,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(14),
-              side: BorderSide(color: Colors.teal.withOpacity(0.35)),
+              side: BorderSide(color: Colors.teal.withOpacity(0.25)),
             ),
             color: Theme.of(context).cardColor,
             child: Padding(
@@ -602,23 +680,37 @@ class _TesterScreenState extends State<TesterScreen> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                isPersian ? 'سنجش نوسان پینگ (Jitter) و پکت لاست (Packet Loss)' : 'Jitter & Packet Loss Filters',
+                                isPersian ? 'سنجش نوسان پینگ (Jitter) و پکت‌لاست (Packet Loss)' : 'Packet Loss & Jitter',
                                 style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
                               ),
                               Text(
-                                isPersian ? 'تنظیم حساسیت کیفیت شبکه برای فیلتر نودهای دارای قطعی یا نوسان شدید' : 'Quality filters for stability and zero packet loss',
+                                isPersian ? 'حذف اتصالات دارای پرش یا قطعی متناوب جهت تضمین ثبات' : 'Filters unstable connections',
                                 style: TextStyle(color: Colors.grey.shade400, fontSize: 12),
                               ),
                             ],
                           ),
                         ],
                       ),
-                      Switch(
-                        value: _t8PacketLoss || _t7Stability,
-                        onChanged: (v) => setState(() {
-                          _t8PacketLoss = v;
-                          _t7Stability = v;
-                        }),
+                      Row(
+                        children: [
+                          Text(isPersian ? 'پکت‌لاست:' : 'Loss:'),
+                          Switch(
+                            value: _t8PacketLoss,
+                            onChanged: (v) {
+                              setState(() => _t8PacketLoss = v);
+                              _autoSaveQuietly();
+                            },
+                          ),
+                          const SizedBox(width: 8),
+                          Text(isPersian ? 'جیتر:' : 'Jitter:'),
+                          Switch(
+                            value: _t7Stability,
+                            onChanged: (v) {
+                              setState(() => _t7Stability = v);
+                              _autoSaveQuietly();
+                            },
+                          ),
+                        ],
                       ),
                     ],
                   ),
@@ -626,45 +718,31 @@ class _TesterScreenState extends State<TesterScreen> {
                     const Divider(height: 24),
                     Row(
                       children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(isPersian ? 'سقف پکت لاست مجاز: ${_maxPacketLossPercent.toInt()}%' : 'Max Packet Loss: ${_maxPacketLossPercent.toInt()}%'),
-                              Slider(
-                                min: 0,
-                                max: 50,
-                                divisions: 10,
-                                value: _maxPacketLossPercent,
-                                onChanged: (v) => setState(() => _maxPacketLossPercent = v),
-                              ),
-                              Text(
-                                isPersian ? 'صفر درصد یعنی فقط کانفیگ‌های ۱۰۰٪ بدون قطعی قبول شوند' : '0% means 100% loss-free connections only',
-                                style: TextStyle(fontSize: 11, color: Colors.grey.shade400),
-                              ),
-                            ],
+                        if (_t8PacketLoss)
+                          Expanded(
+                            child: _buildSteppedSlider(
+                              value: _maxPacketLossPercent,
+                              min: 0,
+                              max: 50,
+                              divisions: 50,
+                              label: isPersian ? 'سقف پکت‌لاست مجاز: ${_maxPacketLossPercent.toInt()}%' : 'Max Packet Loss: ${_maxPacketLossPercent.toInt()}%',
+                              onChanged: (v) => setState(() => _maxPacketLossPercent = v),
+                              step: 1.0,
+                            ),
                           ),
-                        ),
-                        const SizedBox(width: 24),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(isPersian ? 'سقف نوسان زمانی مجاز (Jitter): ${_maxJitterMs.toInt()} میلی‌ثانیه' : 'Max Jitter: ${_maxJitterMs.toInt()} ms'),
-                              Slider(
-                                min: 30,
-                                max: 500,
-                                divisions: 47,
-                                value: _maxJitterMs,
-                                onChanged: (v) => setState(() => _maxJitterMs = v),
-                              ),
-                              Text(
-                                isPersian ? 'نوسان کمتر نشان‌دهنده خط اتصال پایدارتر است' : 'Lower jitter indicates more stable routing',
-                                style: TextStyle(fontSize: 11, color: Colors.grey.shade400),
-                              ),
-                            ],
+                        if (_t8PacketLoss && _t7Stability) const SizedBox(width: 24),
+                        if (_t7Stability)
+                          Expanded(
+                            child: _buildSteppedSlider(
+                              value: _maxJitterMs,
+                              min: 10,
+                              max: 500,
+                              divisions: 490,
+                              label: isPersian ? 'سقف نوسان مجاز (Jitter): ${_maxJitterMs.toInt()} ms' : 'Max Jitter: ${_maxJitterMs.toInt()} ms',
+                              onChanged: (v) => setState(() => _maxJitterMs = v),
+                              step: 1.0,
+                            ),
                           ),
-                        ),
                       ],
                     ),
                   ],
@@ -679,7 +757,7 @@ class _TesterScreenState extends State<TesterScreen> {
             elevation: 0,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(14),
-              side: BorderSide(color: Colors.blueAccent.withOpacity(0.35)),
+              side: BorderSide(color: Colors.blueAccent.withOpacity(0.25)),
             ),
             color: Theme.of(context).cardColor,
             child: Padding(
@@ -713,7 +791,10 @@ class _TesterScreenState extends State<TesterScreen> {
                       ),
                       Switch(
                         value: _t3Gemini,
-                        onChanged: (v) => setState(() => _t3Gemini = v),
+                        onChanged: (v) {
+                          setState(() => _t3Gemini = v);
+                          _autoSaveQuietly();
+                        },
                       ),
                     ],
                   ),
@@ -723,9 +804,9 @@ class _TesterScreenState extends State<TesterScreen> {
                     Container(
                       padding: const EdgeInsets.all(14),
                       decoration: BoxDecoration(
-                        color: _isGoogleLoggedIn ? Colors.green.withOpacity(0.12) : Colors.blue.withOpacity(0.1),
+                        color: _isGoogleLoggedIn ? Colors.green.withOpacity(0.08) : Colors.blue.withOpacity(0.08),
                         borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: _isGoogleLoggedIn ? Colors.green.withOpacity(0.4) : Colors.blue.withOpacity(0.3)),
+                        border: Border.all(color: _isGoogleLoggedIn ? Colors.green.withOpacity(0.3) : Colors.blue.withOpacity(0.2)),
                       ),
                       child: Row(
                         children: [
@@ -767,26 +848,55 @@ class _TesterScreenState extends State<TesterScreen> {
                       ),
                     ),
                     const SizedBox(height: 16),
-                    // Target Selection: Gemini Web vs AI Studio vs Both
-                    Text(isPersian ? 'سایت هدف بررسی جمنای:' : 'Target Service:'),
-                    const SizedBox(height: 8),
-                    SegmentedButton<String>(
-                      segments: [
-                        ButtonSegment(
-                          value: 'gemini_web',
-                          label: Text(isPersian ? 'فقط وب‌سایت جمنای' : 'Gemini Web'),
+                    // Target Selection & Concurrency
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          flex: 3,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(isPersian ? 'سایت هدف بررسی جمنای:' : 'Target Service:'),
+                              const SizedBox(height: 8),
+                              SegmentedButton<String>(
+                                segments: [
+                                  ButtonSegment(
+                                    value: 'gemini_web',
+                                    label: Text(isPersian ? 'فقط جمنای وب' : 'Gemini Web'),
+                                  ),
+                                  ButtonSegment(
+                                    value: 'ai_studio',
+                                    label: Text(isPersian ? 'فقط AI Studio' : 'AI Studio'),
+                                  ),
+                                  ButtonSegment(
+                                    value: 'both',
+                                    label: Text(isPersian ? 'هر دو (کامل)' : 'Both Services'),
+                                  ),
+                                ],
+                                selected: {_geminiTarget},
+                                onSelectionChanged: (set) {
+                                  setState(() => _geminiTarget = set.first);
+                                  _autoSaveQuietly();
+                                },
+                              ),
+                            ],
+                          ),
                         ),
-                        ButtonSegment(
-                          value: 'ai_studio',
-                          label: Text(isPersian ? 'فقط Google AI Studio' : 'AI Studio'),
-                        ),
-                        ButtonSegment(
-                          value: 'both',
-                          label: Text(isPersian ? 'هر دو سرویس (کامل)' : 'Both Services'),
+                        const SizedBox(width: 24),
+                        Expanded(
+                          flex: 2,
+                          child: _buildSteppedSlider(
+                            value: _geminiConcurrency.toDouble(),
+                            min: 1,
+                            max: 10,
+                            divisions: 9,
+                            label: isPersian ? 'همزمانی تست جمنای: $_geminiConcurrency' : 'Gemini Concurrency: $_geminiConcurrency',
+                            onChanged: (v) => setState(() => _geminiConcurrency = v.toInt()),
+                            step: 1.0,
+                          ),
                         ),
                       ],
-                      selected: {_geminiTarget},
-                      onSelectionChanged: (set) => setState(() => _geminiTarget = set.first),
                     ),
                     const SizedBox(height: 16),
                     Text(isPersian ? 'سطح بررسی:' : 'Probe Level:'),
@@ -795,27 +905,37 @@ class _TesterScreenState extends State<TesterScreen> {
                       subtitle: Text(isPersian ? 'بررسی اتصال TCP و TLS به سرورهای جمنای' : 'Quick DNS/TLS probe'),
                       value: 1,
                       groupValue: _geminiLevel,
-                      onChanged: (v) => setState(() => _geminiLevel = v!),
+                      onChanged: (v) {
+                        setState(() => _geminiLevel = v!);
+                        _autoSaveQuietly();
+                      },
                     ),
                     RadioListTile<int>(
                       title: Text(isPersian ? 'سطح ۲: سنجش تحریم منطقه‌ای وب‌اپ (پیشنهادی)' : 'Level 2: Web App Regional Block Check'),
                       subtitle: Text(isPersian ? 'بررسی عدم دریافت خطای Unavailable in your country' : 'Detects "Unavailable in your country" block page'),
                       value: 2,
                       groupValue: _geminiLevel,
-                      onChanged: (v) => setState(() => _geminiLevel = v!),
+                      onChanged: (v) {
+                        setState(() => _geminiLevel = v!);
+                        _autoSaveQuietly();
+                      },
                     ),
                     RadioListTile<int>(
                       title: Text(isPersian ? 'سطح ۳: تست پرامپت زنده با کلید API کاربر' : 'Level 3: Live API Prompt with User Key'),
                       subtitle: Text(isPersian ? 'ارسال پرامپت تست به Gemini Flash و دریافت پاسخ زنده' : 'Sends real prompt to Gemini Flash API'),
                       value: 3,
                       groupValue: _geminiLevel,
-                      onChanged: (v) => setState(() => _geminiLevel = v!),
+                      onChanged: (v) {
+                        setState(() => _geminiLevel = v!);
+                        _autoSaveQuietly();
+                      },
                     ),
                     if (_geminiLevel == 3) ...[
                       const SizedBox(height: 8),
                       TextField(
                         controller: _geminiApiKeyCtrl,
                         obscureText: true,
+                        onChanged: (_) => _autoSaveQuietly(),
                         decoration: InputDecoration(
                           border: const OutlineInputBorder(),
                           labelText: isPersian ? 'کلید API جمنای (Google Gemini API Key)' : 'Gemini API Key',
@@ -836,7 +956,7 @@ class _TesterScreenState extends State<TesterScreen> {
             elevation: 0,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(14),
-              side: BorderSide(color: Colors.green.withOpacity(0.35)),
+              side: BorderSide(color: Colors.green.withOpacity(0.25)),
             ),
             color: Theme.of(context).cardColor,
             child: Padding(
@@ -868,7 +988,10 @@ class _TesterScreenState extends State<TesterScreen> {
                       ),
                       Switch(
                         value: _t4SpeedDown,
-                        onChanged: (v) => setState(() => _t4SpeedDown = v),
+                        onChanged: (v) {
+                          setState(() => _t4SpeedDown = v);
+                          _autoSaveQuietly();
+                        },
                       ),
                     ],
                   ),
@@ -918,12 +1041,14 @@ class _TesterScreenState extends State<TesterScreen> {
                             _speedDownUrl = val;
                             _customSpeedDownCtrl.text = val;
                           });
+                          _autoSaveQuietly();
                         }
                       },
                     ),
                     const SizedBox(height: 12),
                     TextField(
                       controller: _customSpeedDownCtrl,
+                      onChanged: (_) => _autoSaveQuietly(),
                       decoration: InputDecoration(
                         border: const OutlineInputBorder(),
                         labelText: isPersian ? 'یا وارد کردن آدرس سفارشی فایل آزمایشی' : 'Custom Download Test URL',
@@ -946,25 +1071,24 @@ class _TesterScreenState extends State<TesterScreen> {
                                   DropdownMenuItem(value: 10, child: Text('۱۰ مگابایت (دقیق)')),
                                   DropdownMenuItem(value: 20, child: Text('۲۰ مگابایت (سنگین)')),
                                 ],
-                                onChanged: (v) => setState(() => _downloadFileSizeMb = v!),
+                                onChanged: (v) {
+                                  setState(() => _downloadFileSizeMb = v!);
+                                  _autoSaveQuietly();
+                                },
                               ),
                             ],
                           ),
                         ),
                         const SizedBox(width: 16),
                         Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(isPersian ? 'حداقل سرعت قبولی: $_minDownloadSpeedKbps KB/s' : 'Min Speed: $_minDownloadSpeedKbps KB/s'),
-                              Slider(
-                                min: 100,
-                                max: 5000,
-                                divisions: 49,
-                                value: _minDownloadSpeedKbps.toDouble(),
-                                onChanged: (v) => setState(() => _minDownloadSpeedKbps = v.toInt()),
-                              ),
-                            ],
+                          child: _buildSteppedSlider(
+                            value: _minDownloadSpeedKbps.toDouble(),
+                            min: 50,
+                            max: 10000,
+                            divisions: 995,
+                            label: isPersian ? 'حداقل سرعت قبولی: $_minDownloadSpeedKbps KB/s' : 'Min Speed: $_minDownloadSpeedKbps KB/s',
+                            onChanged: (v) => setState(() => _minDownloadSpeedKbps = v.toInt()),
+                            step: 50.0,
                           ),
                         ),
                       ],
@@ -981,7 +1105,7 @@ class _TesterScreenState extends State<TesterScreen> {
             elevation: 0,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(14),
-              side: BorderSide(color: Colors.orange.withOpacity(0.35)),
+              side: BorderSide(color: Colors.orange.withOpacity(0.25)),
             ),
             color: Theme.of(context).cardColor,
             child: Padding(
@@ -1013,7 +1137,10 @@ class _TesterScreenState extends State<TesterScreen> {
                       ),
                       Switch(
                         value: _t5SpeedUp,
-                        onChanged: (v) => setState(() => _t5SpeedUp = v),
+                        onChanged: (v) {
+                          setState(() => _t5SpeedUp = v);
+                          _autoSaveQuietly();
+                        },
                       ),
                     ],
                   ),
@@ -1021,6 +1148,7 @@ class _TesterScreenState extends State<TesterScreen> {
                     const Divider(height: 24),
                     TextField(
                       controller: _customSpeedUpCtrl,
+                      onChanged: (_) => _autoSaveQuietly(),
                       decoration: InputDecoration(
                         border: const OutlineInputBorder(),
                         labelText: isPersian ? 'آدرس مقصد تست آپلود' : 'Upload Target URL',
@@ -1042,25 +1170,24 @@ class _TesterScreenState extends State<TesterScreen> {
                                   DropdownMenuItem(value: 2, child: Text('۲ مگابایت')),
                                   DropdownMenuItem(value: 5, child: Text('۵ مگابایت')),
                                 ],
-                                onChanged: (v) => setState(() => _uploadFileSizeMb = v!),
+                                onChanged: (v) {
+                                  setState(() => _uploadFileSizeMb = v!);
+                                  _autoSaveQuietly();
+                                },
                               ),
                             ],
                           ),
                         ),
                         const SizedBox(width: 16),
                         Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(isPersian ? 'حداقل سرعت قبولی: $_minUploadSpeedKbps KB/s' : 'Min Speed: $_minUploadSpeedKbps KB/s'),
-                              Slider(
-                                min: 50,
-                                max: 2000,
-                                divisions: 39,
-                                value: _minUploadSpeedKbps.toDouble(),
-                                onChanged: (v) => setState(() => _minUploadSpeedKbps = v.toInt()),
-                              ),
-                            ],
+                          child: _buildSteppedSlider(
+                            value: _minUploadSpeedKbps.toDouble(),
+                            min: 20,
+                            max: 5000,
+                            divisions: 498,
+                            label: isPersian ? 'حداقل سرعت قبولی: $_minUploadSpeedKbps KB/s' : 'Min Speed: $_minUploadSpeedKbps KB/s',
+                            onChanged: (v) => setState(() => _minUploadSpeedKbps = v.toInt()),
+                            step: 20.0,
                           ),
                         ),
                       ],
@@ -1077,7 +1204,7 @@ class _TesterScreenState extends State<TesterScreen> {
             elevation: 0,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(14),
-              side: BorderSide(color: Colors.grey.withOpacity(0.25)),
+              side: BorderSide(color: Colors.grey.withOpacity(0.2)),
             ),
             color: Theme.of(context).cardColor,
             child: Padding(
@@ -1094,19 +1221,28 @@ class _TesterScreenState extends State<TesterScreen> {
                     title: Text(isPersian ? 'تشخیص کشور و پرچم (Geo Exit IP)' : 'Country & Flag Detection'),
                     subtitle: Text(isPersian ? 'دریافت IP خروجی و الصاق پرچم کشور به نام پروکسی' : 'Attaches country flag emoji to proxy name'),
                     value: _t2Geo,
-                    onChanged: (v) => setState(() => _t2Geo = v),
+                    onChanged: (v) {
+                      setState(() => _t2Geo = v);
+                      _autoSaveQuietly();
+                    },
                   ),
                   SwitchListTile(
                     title: Text(isPersian ? 'پروتکل UDP (مخصوص گیمینگ و تماس صوتی)' : 'UDP Support Check'),
                     subtitle: Text(isPersian ? 'تست بسته‌های UDP برای بازی‌های آنلاین و دیسکورد' : 'Ensures UDP traffic is supported for gaming/calls'),
                     value: _t6UDP,
-                    onChanged: (v) => setState(() => _t6UDP = v),
+                    onChanged: (v) {
+                      setState(() => _t6UDP = v);
+                      _autoSaveQuietly();
+                    },
                   ),
                   SwitchListTile(
                     title: Text(isPersian ? 'نمره تمیزی آی‌پی (Fraud Score)' : 'IP Fraud Score'),
                     subtitle: Text(isPersian ? 'اطمینان از تمیز بودن IP جهت جلوگیری از کپچاهای متعدد' : 'Filters datacenter/abused IPs causing captchas'),
                     value: _t9Fraud,
-                    onChanged: (v) => setState(() => _t9Fraud = v),
+                    onChanged: (v) {
+                      setState(() => _t9Fraud = v);
+                      _autoSaveQuietly();
+                    },
                   ),
                 ],
               ),

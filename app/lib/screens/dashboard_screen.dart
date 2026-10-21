@@ -41,6 +41,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
         title: Text(isPersian ? 'داشبورد کنترل و تحلیل زنده' : 'Live Dashboard & Analytics'),
         actions: [
           IconButton(
+            icon: const Icon(Icons.folder_open),
+            tooltip: isPersian ? 'باز کردن پوشه خروجی‌ها (output/)' : 'Open Output Folder',
+            onPressed: () => _config.openOutputFolder(),
+          ),
+          IconButton(
             icon: const Icon(Icons.refresh),
             tooltip: isPersian ? 'بارگذاری مجدد تنظیمات' : 'Reload Settings',
             onPressed: () => _config.loadSettings(),
@@ -232,6 +237,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                   ),
                               ],
                             ),
+                            if (!_config.isRunning && _config.currentStage == 5) ...[
+                              const SizedBox(height: 12),
+                              OutlinedButton.icon(
+                                onPressed: () => _config.openOutputFolder(),
+                                icon: const Icon(Icons.folder_open, color: Colors.greenAccent),
+                                label: Text(
+                                  isPersian ? '📁 مشاهده فایل‌های خروجی در پوشه output' : 'Open Output Directory',
+                                  style: const TextStyle(fontWeight: FontWeight.bold),
+                                ),
+                              ),
+                            ],
                           ],
                         ),
                       ),

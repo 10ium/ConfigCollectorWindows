@@ -93,9 +93,11 @@ func ParseShadowsocks(rawURI string) (*model.Node, error) {
 	}, nil
 }
 
-// ParseTelegramProxy parses tg://socks and tg://proxy URIs.
+// ParseTelegramProxy parses tg://socks, tg://proxy, and https://t.me/proxy URIs.
 func ParseTelegramProxy(rawURI string) (*model.Node, error) {
-	u, err := url.Parse(rawURI)
+	cleanURI := strings.Replace(rawURI, "https://t.me/", "tg://", 1)
+	cleanURI = strings.Replace(cleanURI, "http://t.me/", "tg://", 1)
+	u, err := url.Parse(cleanURI)
 	if err != nil {
 		return nil, err
 	}
@@ -107,12 +109,24 @@ func ParseTelegramProxy(rawURI string) (*model.Node, error) {
 		return nil, fmt.Errorf("invalid telegram proxy params")
 	}
 
+	isMTProto := strings.Contains(strings.ToLower(u.Host), "proxy") || strings.Contains(strings.ToLower(u.Path), "proxy")
+	proto := "tg-socks"
+	secret := q.Get("secret")
+	if secret != "" || isMTProto {
+		proto = "mtproto"
+	}
+	if secret == "" {
+		secret = q.Get("pass")
+	}
+
 	return &model.Node{
-		Protocol: "socks5",
-		Name:     "TG-Proxy-" + server,
-		Server:   server,
-		Port:     port,
-		UUID:     q.Get("user"),
-		Password: q.Get("pass"),
+		Protocol:        proto,
+		Category:        "telegram",
+		IsTelegramProxy: true,
+		Name:            "TG-" + strings.ToUpper(proto) + "-" + server,
+		Server:          server,
+		Port:            port,
+		UUID:            q.Get("user"),
+		Password:        secret,
 	}, nil
 }
