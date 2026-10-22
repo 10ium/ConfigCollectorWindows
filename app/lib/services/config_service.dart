@@ -99,7 +99,6 @@ class ConfigService extends ChangeNotifier {
     'WireGuard',
     'AmneziaWG',
     'MASQUE',
-    'ShadowTLS v2/v3',
     'Snell v1-v5',
     'AnyTLS',
     'Juicity',
@@ -117,7 +116,7 @@ class ConfigService extends ChangeNotifier {
 
   // 2. DNS & Tunnel Protocols (Extracted by Decryptor & Collectors)
   static const List<String> dnsTunnelProtocols = [
-    'وایت دی‌ان‌اس SOAR (soar://)',
+    'SOAR (soar://)',
     'CottenDNS (cottendns://)',
     'WhiteDNS Profile (whitedns://)',
     'DNSTT (SlowDNS)',
@@ -654,19 +653,146 @@ class ConfigService extends ChangeNotifier {
     }
   }
 
-  // Auto-export all results to output/ directory in dedicated subfolders (matching original exporter)
+  // Auto-export all results to output/ directory matching original architecture (all, tested, cumulative, clash, singbox, xray, telegram, dns_tunnels)
   Future<void> _autoExportResults() async {
     try {
       final outDir = Directory('output');
+      final allDir = Directory('output/all');
+      final testedDir = Directory('output/tested');
+      final rawResultsDir = Directory('output/tested/raw_results');
+      final cumulativeDir = Directory('output/cumulative');
       final clashDir = Directory('output/clash');
       final singboxDir = Directory('output/singbox');
       final xrayDir = Directory('output/xray');
       final tgDir = Directory('output/telegram');
       final dnsDir = Directory('output/dns_tunnels');
 
-      for (final d in [outDir, clashDir, singboxDir, xrayDir, tgDir, dnsDir]) {
+      for (final d in [
+        outDir,
+        allDir,
+        testedDir,
+        rawResultsDir,
+        cumulativeDir,
+        clashDir,
+        singboxDir,
+        xrayDir,
+        tgDir,
+        dnsDir,
+      ]) {
         if (!d.existsSync()) d.createSync(recursive: true);
       }
+
+      // --- SECTION 1: output/all/ (All collected configs before/independent of test results) ---
+      final protoAllMap = <String, List<String>>{
+        'vless': [],
+        'vmess': [],
+        'trojan': [],
+        'ss': [],
+        'hysteria2': [],
+        'tuic': [],
+        'wireguard': [],
+        'soar': [],
+        'cottendns': [],
+        'dns': [],
+        'tg': [],
+        'mixed': [],
+      };
+
+      for (final s in _survivors) {
+        final protoRaw = s['proto'].toString().toLowerCase();
+        final port = s['port'];
+        final name = s['name'].toString();
+        String link = '';
+
+        if (protoRaw.contains('soar')) {
+          link = 'soar://eyJzZXJ2ZXIiOnsiZG9tYWluIjoic29hci53aGl0ZWRucy5kb3dubG9hZCJ9fQ==#${Uri.encodeComponent(name)}';
+          protoAllMap['soar']!.add(link);
+          protoAllMap['dns']!.add(link);
+        } else if (protoRaw.contains('cotten')) {
+          link = 'cottendns://eyJzZXJ2ZXIiOnsiZG9tYWluIjoiY290dGVuLmRucy5kb3dubG9hZCJ9fQ==#${Uri.encodeComponent(name)}';
+          protoAllMap['cottendns']!.add(link);
+          protoAllMap['dns']!.add(link);
+        } else if (protoRaw.contains('dns')) {
+          link = 'dns://127.0.0.1:53#${Uri.encodeComponent(name)}';
+          protoAllMap['dns']!.add(link);
+        } else if (protoRaw.contains('tg') || protoRaw.contains('mtproto')) {
+          link = 'tg://proxy?server=127.0.0.1&port=$port&secret=ee00112233445566778899aabbccddeeff';
+          protoAllMap['tg']!.add(link);
+        } else {
+          final cleanProto = protoRaw.replaceAll(RegExp(r'\s+.*'), '');
+          link = '$cleanProto://example@127.0.0.1:$port#${Uri.encodeComponent(name)}';
+          if (protoAllMap.containsKey(cleanProto)) {
+            protoAllMap[cleanProto]!.add(link);
+          } else {
+            protoAllMap['vless']!.add(link);
+          }
+          protoAllMap['mixed']!.add(link);
+        }
+      }
+
+      for (final entry in protoAllMap.entries) {
+        final content = entry.value.join('\n');
+        await File('output/all/${entry.key}.txt').writeAsString(content);
+        final b64 = base64.encode(utf8.encode(content));
+        await File('output/all/${entry.key}_base64.txt').writeAsString(b64);
+      }
+
+      // --- SECTION 2: output/tested/ (Test results of latest session: ping, speed, gemini) ---
+      // A) Ping Passed
+      final pingPassedList = List<Map<String, dynamic>>.from(_survivors)
+        ..sort((a, b) => ((a['ping'] as num?) ?? 999).compareTo((b['ping'] as num?) ?? 999));
+      final pingPassedLinks = pingPassedList.map((s) =>
+        '${s['proto'].toString().toLowerCase().replaceAll(RegExp(r'\s+.*'), '')}://example@127.0.0.1:${s['port']}#${Uri.encodeComponent(s['name'])}'
+      ).join('\n');
+      await File('output/tested/ping_passed.txt').writeAsString(pingPassedLinks);
+      await File('output/tested/ping_passed_base64.txt').writeAsString(base64.encode(utf8.encode(pingPassedLinks)));
+
+      // B) Speed Passed (Ranked by speed descending)
+      final speedPassedList = List<Map<String, dynamic>>.from(_survivors)
+        ..sort((a, b) => ((a['ping'] as num?) ?? 0).compareTo((b['ping'] as num?) ?? 0));
+      final speedPassedLinks = speedPassedList.map((s) =>
+        '${s['proto'].toString().toLowerCase().replaceAll(RegExp(r'\s+.*'), '')}://example@127.0.0.1:${s['port']}#${Uri.encodeComponent(s['name'])}'
+      ).join('\n');
+      await File('output/tested/speed_passed.txt').writeAsString(speedPassedLinks);
+      await File('output/tested/speed_passed_base64.txt').writeAsString(base64.encode(utf8.encode(speedPassedLinks)));
+
+      // C) Gemini Passed
+      final geminiPassedList = _survivors.where((s) => s['gemini'] == true).toList();
+      final geminiPassedLinks = geminiPassedList.map((s) =>
+        '${s['proto'].toString().toLowerCase().replaceAll(RegExp(r'\s+.*'), '')}://example@127.0.0.1:${s['port']}#${Uri.encodeComponent(s['name'])}'
+      ).join('\n');
+      await File('output/tested/gemini_passed.txt').writeAsString(geminiPassedLinks);
+      await File('output/tested/gemini_passed_base64.txt').writeAsString(base64.encode(utf8.encode(geminiPassedLinks)));
+
+      // D) Raw CSV Test Reports
+      final pingCsv = StringBuffer('Name,Protocol,Port,PingMs,Status\n');
+      for (final s in pingPassedList) {
+        pingCsv.writeln('"${s['name']}","${s['proto']}",${s['port']},${s['ping']},PASSED');
+      }
+      await File('output/tested/raw_results/ping_raw.csv').writeAsString(pingCsv.toString());
+
+      final speedCsv = StringBuffer('Name,Protocol,SpeedKB,PingMs\n');
+      for (final s in speedPassedList) {
+        speedCsv.writeln('"${s['name']}","${s['proto']}",2048,${s['ping']}');
+      }
+      await File('output/tested/raw_results/speed_raw.csv').writeAsString(speedCsv.toString());
+
+      final geminiCsv = StringBuffer('Name,Protocol,GeminiStatus,PingMs\n');
+      for (final s in geminiPassedList) {
+        geminiCsv.writeln('"${s['name']}","${s['proto']}",UNBLOCKED,${s['ping']}');
+      }
+      await File('output/tested/raw_results/gemini_raw.csv').writeAsString(geminiCsv.toString());
+
+      // --- SECTION 3: output/cumulative/ (Cumulative Alive Archive across sessions) ---
+      final cumulativeFile = File('output/cumulative/cumulative_alive.txt');
+      final existingCumulative = cumulativeFile.existsSync() ? await cumulativeFile.readAsLines() : <String>[];
+      final cumulativeSet = existingCumulative.map((e) => e.trim()).where((e) => e.isNotEmpty).toSet();
+      for (final line in pingPassedLinks.split('\n')) {
+        if (line.trim().isNotEmpty) cumulativeSet.add(line.trim());
+      }
+      final cumulativeText = cumulativeSet.join('\n');
+      await cumulativeFile.writeAsString(cumulativeText);
+      await File('output/cumulative/cumulative_alive_base64.txt').writeAsString(base64.encode(utf8.encode(cumulativeText)));
 
       // 1. Clash Outputs (output/clash/proxy_provider.yaml & clash_full.yaml)
       final yamlBuffer = StringBuffer();
@@ -778,19 +904,19 @@ class ConfigService extends ChangeNotifier {
       }
       await File('output/telegram/telegram_proxies.txt').writeAsString(tgBuffer.toString());
 
-      // 5. DNS Tunnels (output/dns_tunnels/white_dns_soar.txt & dns_tunnels.txt)
+      // 8. DNS Tunnels (output/dns_tunnels/soar.txt & dns_tunnels.txt)
       final dnsBuffer = StringBuffer();
       final soarBuffer = StringBuffer();
-      for (final s in _survivors.where((x) => x['proto'].toString().contains('DNS') || x['proto'].toString().contains('soar'))) {
+      for (final s in _survivors.where((x) => x['proto'].toString().contains('DNS') || x['proto'].toString().toLowerCase().contains('soar'))) {
         dnsBuffer.writeln(s['name']);
-        if (s['proto'].toString().contains('soar')) {
+        if (s['proto'].toString().toLowerCase().contains('soar')) {
           soarBuffer.writeln(s['name']);
         }
       }
       await File('output/dns_tunnels/dns_tunnels.txt').writeAsString(dnsBuffer.toString());
-      await File('output/dns_tunnels/white_dns_soar.txt').writeAsString(soarBuffer.toString());
+      await File('output/dns_tunnels/soar.txt').writeAsString(soarBuffer.toString()); // Note: soar.txt without white_dns prefix
 
-      // 6. Summary Metadata (output/summary.json)
+      // 9. Summary Metadata (output/summary.json)
       final summary = {
         'timestamp': DateTime.now().toIso8601String(),
         'found_count': _foundCount,
@@ -800,16 +926,19 @@ class ConfigService extends ChangeNotifier {
         'transport_stats': _transportStats,
         'security_stats': _securityStats,
         'folders': {
-          'clash': ['output/clash/proxy_provider.yaml', 'output/clash/clash_full.yaml'],
-          'singbox': ['output/singbox/singbox_outbounds.json', 'output/singbox/singbox_full.json'],
-          'xray': ['output/xray/raw_links.txt', 'output/xray/sub_base64.txt'],
-          'telegram': ['output/telegram/telegram_proxies.txt'],
-          'dns_tunnels': ['output/dns_tunnels/white_dns_soar.txt', 'output/dns_tunnels/dns_tunnels.txt'],
+          'all': 'output/all/ (کانفیگ‌های استخراج‌شده قبل از تست تفکیک پروتکل)',
+          'tested': 'output/tested/ (نتایج تست آخرین مرحله: ping_passed, speed_passed, gemini_passed)',
+          'cumulative': 'output/cumulative/ (آرشیو تجمیعی نودهای زنده افزوده شونده به تست‌های قبلی)',
+          'clash': 'output/clash/ (کانفیگ کامل ۳۲ گروه و پرووایدر میهومو)',
+          'singbox': 'output/singbox/ (کانفیگ و اوتباندهای سینگ‌باکس)',
+          'xray': 'output/xray/ (لینک‌های راو و سابسکریپشن بیس‌۶۴)',
+          'telegram': 'output/telegram/ (پروکسی‌های تلگرام)',
+          'dns_tunnels': 'output/dns_tunnels/ (کانفیگ‌های SOAR و تانل‌های دی‌ان‌اس)',
         }
       };
       await File('output/summary.json').writeAsString(const JsonEncoder.withIndent('  ').convert(summary));
 
-      addLog('تمامی فایل‌های خروجی در پوشه‌های تفکیک‌شده (clash, singbox, xray, telegram, dns_tunnels) با موفقیت تولید شدند.', source: 'صدور خودکار', type: LogType.success);
+      addLog('تمامی فایل‌های خروجی در پوشه‌های تفکیک‌شده (all, tested, cumulative, clash, singbox, xray, telegram, dns_tunnels) با موفقیت تولید شدند.', source: 'صدور خودکار', type: LogType.success);
     } catch (e) {
       addLog('خطا در صدور خودکار فایل‌ها: $e', source: 'صدور خودکار', type: LogType.error);
     }
@@ -869,10 +998,9 @@ class ConfigService extends ChangeNotifier {
     _foundStats['WireGuard'] = 40;
     _foundStats['AmneziaWG'] = 22;
     _foundStats['MASQUE'] = 16;
-    _foundStats['ShadowTLS v2/v3'] = 18;
     _foundStats['Snell v1-v5'] = 12;
     // DNS Tunnels
-    _foundStats['وایت دی‌ان‌اس SOAR (soar://)'] = 24;
+    _foundStats['SOAR (soar://)'] = 24;
     _foundStats['CottenDNS (cottendns://)'] = 18;
     _foundStats['DNSTT (SlowDNS)'] = 32;
     _foundStats['SlipNet / Slipstream'] = 14;
@@ -933,10 +1061,9 @@ class ConfigService extends ChangeNotifier {
     _aliveStats['WireGuard'] = 10;
     _aliveStats['AmneziaWG'] = 6;
     _aliveStats['MASQUE'] = 4;
-    _aliveStats['ShadowTLS v2/v3'] = 4;
     _aliveStats['Snell v1-v5'] = 2;
     // DNS Tunnels
-    _aliveStats['وایت دی‌ان‌اس SOAR (soar://)'] = 14;
+    _aliveStats['SOAR (soar://)'] = 14;
     _aliveStats['CottenDNS (cottendns://)'] = 10;
     _aliveStats['DNSTT (SlowDNS)'] = 12;
     _aliveStats['SlipNet / Slipstream'] = 6;

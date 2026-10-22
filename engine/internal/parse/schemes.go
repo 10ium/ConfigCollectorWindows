@@ -75,7 +75,7 @@ func parseWhiteDNSProfile(rawURI string, scheme string) (*model.Node, error) {
 		if err := json.Unmarshal([]byte(decoded), &wp); err == nil && wp.Profile.Server.Domain != "" {
 			name := wp.Profile.Name
 			if name == "" {
-				name = "WhiteDNS-" + strings.ToUpper(scheme) + "-" + wp.Profile.Server.Domain
+				name = strings.ToUpper(scheme) + "-" + wp.Profile.Server.Domain
 			}
 			pubKey := wp.Profile.Server.PublicKey
 			pass := wp.Profile.Server.EncryptionKey
