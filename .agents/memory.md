@@ -99,6 +99,25 @@
   - Native Windows Forms `NotifyIcon` helper script (`tools/tray_helper.ps1`) runs without third-party python modules like `pystray`.
   - Provides quick tray context menu: Open Dashboard, Run Now, Exit.
 
+## v2.2.0 Refinements & Discoveries
+- **Protocol Clarifications**:
+  - `Rematch`: Mihomo rule-provider match condition, not an outbound protocol. Removed from protocol categories.
+  - `ShadowTLS` vs `ShadowQUIC`: Mihomo natively supports both `shadow-tls` (v2/v3) and `shadowquic`. Both retained with explicit distinction.
+  - `WhiteDNS SOAR`: Protocol `soar://` designated as `وایت دی‌ان‌اس SOAR (soar://)`.
+  - `DoH`: Removed from tunneling protocols catalog as it is ordinary DNS resolution over HTTPS.
+- **Multi-Folder Auto-Export Architecture**:
+  - Automatic export upon scan completion writes directly to:
+    - `output/clash/`: `proxy_provider.yaml` & `clash_full.yaml`
+    - `output/singbox/`: `singbox_outbounds.json` & `singbox_full.json`
+    - `output/xray/`: `raw_links.txt` & `sub_base64.txt`
+    - `output/telegram/`: `telegram_proxies.txt`
+    - `output/dns_tunnels/`: `white_dns_soar.txt` & `dns_tunnels.txt`
+    - `output/summary.json` (metadata)
+  - Removed manual generation button from ExportScreen; replaced with direct folder explorer shortcut.
+- **Precision Stepped Sliders**:
+  - Subscription timeout slider configured with `divisions: 55` (`min: 5, max: 60`), achieving exact 1-second increments with `[-]` and `[+]` stepping buttons and debounced auto-save.
+
+
 ## 14. V2.0.0 Comprehensive Refinements & User Experience Upgrades (Build 39334018600)
 - **Multi-Stage Progress Tracker**:
   - Implemented 5 clear sequential stages (Stage 1: Collection, Stage 2: Deduplication, Stage 3: Ping, Stage 4: Advanced Testing, Stage 5: Final Export).
