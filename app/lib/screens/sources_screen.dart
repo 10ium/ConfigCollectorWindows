@@ -62,23 +62,29 @@ class _SourcesScreenState extends State<SourcesScreen> {
   }
 
   void _saveSources() {
+    _autoSaveQuietly();
     final isPersian = Localizations.localeOf(context).languageCode == 'fa';
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(isPersian ? 'منابع با موفقیت ذخیره شدند (لینک‌های گیت‌هاب به Raw تبدیل شدند).' : 'Sources saved with GitHub Raw conversion.'),
+        backgroundColor: Colors.green,
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
 
+  void _autoSaveQuietly() {
     final channelsList = _channelsCtrl.text
         .split('\n')
         .map((e) => e.trim())
         .where((e) => e.isNotEmpty)
         .toList();
 
-    // Auto-convert GitHub web URLs to raw URLs on the fly
     final urlsList = _providersCtrl.text
         .split('\n')
         .map((e) => ConfigService.normalizeGithubUrl(e))
         .where((e) => e.isNotEmpty)
         .toList();
-
-    // Update text field to show converted raw links
-    _providersCtrl.text = urlsList.join('\n');
 
     _config.updateNestedSetting('sources', 'telegram', 'enabled', _telegramEnabled);
     _config.updateNestedSetting('sources', 'telegram', 'channels', channelsList);
@@ -92,12 +98,102 @@ class _SourcesScreenState extends State<SourcesScreen> {
     _config.updateNestedSetting('sources', 'local_folder', 'path', _folderCtrl.text.trim());
 
     _config.saveSettings();
+  }
 
+  void _resetToDefaults() {
+    final isPersian = Localizations.localeOf(context).languageCode == 'fa';
+    setState(() {
+      _telegramEnabled = true;
+      _providersEnabled = true;
+      _localFolderEnabled = false;
+      _telegramDelayMs = 600;
+      _subTimeoutSec = 12;
+      _channelsCtrl.text = '@vless_collector\n@v2ray_free_conf';
+      _providersCtrl.text = 'https://raw.githubusercontent.com/yebekhe/TVC/main/subscriptions/xray/normal/mix';
+      _folderCtrl.text = 'G:\\Ai project\\10Dream\\decryptor\\file for test';
+    });
+    _autoSaveQuietly();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(isPersian ? 'منابع با موفقیت ذخیره شدند (لینک‌های گیت‌هاب به Raw تبدیل شدند).' : 'Sources saved with GitHub Raw conversion.'),
-        backgroundColor: Colors.green,
+        content: Text(isPersian ? 'تنظیمات منابع به مقادیر پیش‌فرض بازگردانی شدند.' : 'Sources reset to defaults.'),
+        backgroundColor: Colors.blueAccent,
+        duration: const Duration(seconds: 2),
       ),
+    );
+  }
+
+  Widget _buildSteppedSlider({
+    required String label,
+    required String valueDisplay,
+    required double value,
+    required double min,
+    required double max,
+    required int divisions,
+    required double step,
+    required ValueChanged<double> onChanged,
+    String? hint,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(label, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+              decoration: BoxDecoration(
+                color: Colors.blueAccent.withOpacity(0.12),
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: Colors.blueAccent.withOpacity(0.3)),
+              ),
+              child: Text(
+                valueDisplay,
+                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.blueAccent),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        Row(
+          children: [
+            IconButton(
+              icon: const Icon(Icons.remove_circle_outline, size: 22),
+              onPressed: value > min
+                  ? () {
+                      final newVal = (value - step).clamp(min, max);
+                      onChanged(newVal);
+                    }
+                  : null,
+              tooltip: '-$step',
+            ),
+            Expanded(
+              child: Slider(
+                min: min,
+                max: max,
+                divisions: divisions,
+                value: value.clamp(min, max),
+                onChanged: onChanged,
+              ),
+            ),
+            IconButton(
+              icon: const Icon(Icons.add_circle_outline, size: 22),
+              onPressed: value < max
+                  ? () {
+                      final newVal = (value + step).clamp(min, max);
+                      onChanged(newVal);
+                    }
+                  : null,
+              tooltip: '+$step',
+            ),
+          ],
+        ),
+        if (hint != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 2.0),
+            child: Text(hint, style: TextStyle(fontSize: 11, color: Colors.grey.shade400)),
+          ),
+      ],
     );
   }
 
@@ -109,10 +205,16 @@ class _SourcesScreenState extends State<SourcesScreen> {
       appBar: AppBar(
         title: Text(isPersian ? 'مدیریت منابع استخراج' : 'Input Sources Management'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.restart_alt),
+            tooltip: isPersian ? 'بازگردانی به مقادیر پیش‌فرض' : 'Reset to Defaults',
+            onPressed: _resetToDefaults,
+          ),
+          const SizedBox(width: 8),
           FilledButton.icon(
             onPressed: _saveSources,
             icon: const Icon(Icons.save),
-            label: Text(isPersian ? 'ذخیره تغییرات' : 'Save Changes'),
+            label: Text(isPersian ? 'ذخیره دستی' : 'Save'),
           ),
           const SizedBox(width: 16),
         ],
@@ -152,19 +254,28 @@ class _SourcesScreenState extends State<SourcesScreen> {
                         avatar: Icon(Icons.telegram, size: 18, color: _telegramEnabled ? Colors.white : Colors.blue),
                         label: Text(isPersian ? 'کانال‌های تلگرام' : 'Telegram Channels'),
                         selected: _telegramEnabled,
-                        onSelected: (val) => setState(() => _telegramEnabled = val),
+                        onSelected: (val) {
+                          setState(() => _telegramEnabled = val);
+                          _autoSaveQuietly();
+                        },
                       ),
                       FilterChip(
                         avatar: Icon(Icons.hub, size: 18, color: _providersEnabled ? Colors.white : Colors.indigoAccent),
                         label: Text(isPersian ? 'پروکسی پروایدرها (لینک‌های اشتراک)' : 'Proxy Providers'),
                         selected: _providersEnabled,
-                        onSelected: (val) => setState(() => _providersEnabled = val),
+                        onSelected: (val) {
+                          setState(() => _providersEnabled = val);
+                          _autoSaveQuietly();
+                        },
                       ),
                       FilterChip(
                         avatar: Icon(Icons.folder, size: 18, color: _localFolderEnabled ? Colors.white : Colors.amber),
                         label: Text(isPersian ? 'پوشه فایل‌های محلی' : 'Local Folder'),
                         selected: _localFolderEnabled,
-                        onSelected: (val) => setState(() => _localFolderEnabled = val),
+                        onSelected: (val) {
+                          setState(() => _localFolderEnabled = val);
+                          _autoSaveQuietly();
+                        },
                       ),
                     ],
                   ),
@@ -207,7 +318,10 @@ class _SourcesScreenState extends State<SourcesScreen> {
                       ),
                       Switch(
                         value: _providersEnabled,
-                        onChanged: (v) => setState(() => _providersEnabled = v),
+                        onChanged: (v) {
+                          setState(() => _providersEnabled = v);
+                          _autoSaveQuietly();
+                        },
                       ),
                     ],
                   ),
@@ -239,25 +353,29 @@ class _SourcesScreenState extends State<SourcesScreen> {
                     TextField(
                       controller: _providersCtrl,
                       maxLines: 5,
+                      onChanged: (_) => _autoSaveQuietly(),
                       decoration: InputDecoration(
                         border: const OutlineInputBorder(),
                         hintText: 'https://example.com/sub/all.yaml\nhttps://example.com/sub2.txt',
                         labelText: isPersian ? 'آدرس لینک‌های پروکسی پروایدر (هر خط یک آدرس)' : 'Proxy Provider URLs (One per line)',
                       ),
                     ),
-                    const SizedBox(height: 12),
-                    Text(
-                      isPersian
-                          ? 'مهلت دریافت پاسخ از سرور پروایدر: $_subTimeoutSec ثانیه'
-                          : 'Subscription Request Timeout: $_subTimeoutSec s',
-                      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
-                    ),
-                    Slider(
+                    const SizedBox(height: 14),
+                    _buildSteppedSlider(
+                      label: isPersian ? 'مهلت دریافت پاسخ از سرور پروایدر:' : 'Subscription Request Timeout:',
+                      valueDisplay: isPersian ? '$_subTimeoutSec ثانیه' : '$_subTimeoutSec s',
+                      value: _subTimeoutSec.toDouble(),
                       min: 5,
                       max: 60,
-                      divisions: 11,
-                      value: _subTimeoutSec.toDouble(),
-                      onChanged: (v) => setState(() => _subTimeoutSec = v.toInt()),
+                      divisions: 55, // exactly 1.0s per step: (60 - 5) / 55 = 1!
+                      step: 1.0,
+                      onChanged: (v) {
+                        setState(() => _subTimeoutSec = v.toInt());
+                        _autoSaveQuietly();
+                      },
+                      hint: isPersian
+                          ? 'تنظیم دقیق ۱ ثانیه به ۱ ثانیه (با دکمه‌های + و - یا لغزنده).'
+                          : 'Fine-tune 1 second at a time with +/- buttons or slider.',
                     ),
                   ],
                 ],
@@ -299,7 +417,10 @@ class _SourcesScreenState extends State<SourcesScreen> {
                       ),
                       Switch(
                         value: _telegramEnabled,
-                        onChanged: (v) => setState(() => _telegramEnabled = v),
+                        onChanged: (v) {
+                          setState(() => _telegramEnabled = v);
+                          _autoSaveQuietly();
+                        },
                       ),
                     ],
                   ),
@@ -308,31 +429,29 @@ class _SourcesScreenState extends State<SourcesScreen> {
                     TextField(
                       controller: _channelsCtrl,
                       maxLines: 5,
+                      onChanged: (_) => _autoSaveQuietly(),
                       decoration: InputDecoration(
                         border: const OutlineInputBorder(),
                         hintText: '@Channel1\n@Channel2\nhttps://t.me/s/Channel3',
                         labelText: isPersian ? 'آیدی یا لینک کانال‌ها (هر خط یک کانال)' : 'Channel IDs or Links (One per line)',
                       ),
                     ),
-                    const SizedBox(height: 12),
-                    Text(
-                      isPersian
-                          ? 'وقفه بین واکشی پست‌های کانال‌های تلگرام: $_telegramDelayMs میلی‌ثانیه'
-                          : 'Telegram Fetch Delay: $_telegramDelayMs ms',
-                      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
-                    ),
-                    Slider(
+                    const SizedBox(height: 14),
+                    _buildSteppedSlider(
+                      label: isPersian ? 'وقفه بین واکشی پست‌های کانال‌های تلگرام:' : 'Telegram Fetch Delay:',
+                      valueDisplay: isPersian ? '$_telegramDelayMs میلی‌ثانیه' : '$_telegramDelayMs ms',
+                      value: _telegramDelayMs.toDouble(),
                       min: 100,
                       max: 2000,
-                      divisions: 19,
-                      value: _telegramDelayMs.toDouble(),
-                      onChanged: (v) => setState(() => _telegramDelayMs = v.toInt()),
-                    ),
-                    Text(
-                      isPersian
+                      divisions: 38, // 50 ms per step: (2000 - 100) / 38 = 50.0!
+                      step: 50.0,
+                      onChanged: (v) {
+                        setState(() => _telegramDelayMs = v.toInt());
+                        _autoSaveQuietly();
+                      },
+                      hint: isPersian
                           ? 'نکته: وقفه بین کانال‌های تلگرام برای پیشگیری از بلاک شدن آی‌پی توسط وب تلگرام است.'
                           : 'Note: This delay prevents Telegram Web from rate-limiting or blocking IP requests.',
-                      style: TextStyle(fontSize: 11, color: Colors.grey.shade400),
                     ),
                   ],
                 ],
@@ -374,7 +493,10 @@ class _SourcesScreenState extends State<SourcesScreen> {
                       ),
                       Switch(
                         value: _localFolderEnabled,
-                        onChanged: (v) => setState(() => _localFolderEnabled = v),
+                        onChanged: (v) {
+                          setState(() => _localFolderEnabled = v);
+                          _autoSaveQuietly();
+                        },
                       ),
                     ],
                   ),
@@ -382,6 +504,7 @@ class _SourcesScreenState extends State<SourcesScreen> {
                     const Divider(height: 24),
                     TextField(
                       controller: _folderCtrl,
+                      onChanged: (_) => _autoSaveQuietly(),
                       decoration: InputDecoration(
                         border: const OutlineInputBorder(),
                         labelText: isPersian ? 'مسیر پوشه روی سیستم' : 'Directory Path',

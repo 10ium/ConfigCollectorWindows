@@ -110,7 +110,6 @@ class ConfigService extends ChangeNotifier {
     'EasyTier',
     'Tailscale',
     'ZeroTier',
-    'Rematch',
     'OpenVPN',
     'SOCKS5',
     'HTTP/HTTPS',
@@ -118,7 +117,7 @@ class ConfigService extends ChangeNotifier {
 
   // 2. DNS & Tunnel Protocols (Extracted by Decryptor & Collectors)
   static const List<String> dnsTunnelProtocols = [
-    'WhiteDNS SOAR (soar://)',
+    'وایت دی‌ان‌اس SOAR (soar://)',
     'CottenDNS (cottendns://)',
     'WhiteDNS Profile (whitedns://)',
     'DNSTT (SlowDNS)',
@@ -130,7 +129,6 @@ class ConfigService extends ChangeNotifier {
     'MasterDNS',
     'NoizDNS',
     'SSH over DNS (ssh-dns)',
-    'DNS over HTTPS (DoH)',
     'Raw DNS Tunnel (dns://)',
   ];
 
@@ -656,36 +654,143 @@ class ConfigService extends ChangeNotifier {
     }
   }
 
-  // Auto-export all results to output/ directory
+  // Auto-export all results to output/ directory in dedicated subfolders (matching original exporter)
   Future<void> _autoExportResults() async {
     try {
       final outDir = Directory('output');
-      if (!outDir.existsSync()) {
-        outDir.createSync(recursive: true);
+      final clashDir = Directory('output/clash');
+      final singboxDir = Directory('output/singbox');
+      final xrayDir = Directory('output/xray');
+      final tgDir = Directory('output/telegram');
+      final dnsDir = Directory('output/dns_tunnels');
+
+      for (final d in [outDir, clashDir, singboxDir, xrayDir, tgDir, dnsDir]) {
+        if (!d.existsSync()) d.createSync(recursive: true);
       }
 
-      // 1. mihomo_proxies.yaml
+      // 1. Clash Outputs (output/clash/proxy_provider.yaml & clash_full.yaml)
       final yamlBuffer = StringBuffer();
-      yamlBuffer.writeln('# Freedom Config Collector v2 - Verified Proxies');
+      yamlBuffer.writeln('# Freedom Config Collector v2 - Verified Proxies Provider');
       yamlBuffer.writeln('# Generated at: ${DateTime.now().toIso8601String()}');
       yamlBuffer.writeln('proxies:');
+
+      final proxyNames = <String>[];
       for (final s in _survivors) {
-        yamlBuffer.writeln('  - name: "${s['name']}"');
-        yamlBuffer.writeln('    type: ${s['proto'].toString().toLowerCase().replaceAll(RegExp(r'\s+.*'), '')}');
+        final pName = s['name'].toString();
+        proxyNames.add(pName);
+        final protoClean = s['proto'].toString().toLowerCase().replaceAll(RegExp(r'\s+.*'), '');
+        yamlBuffer.writeln('  - name: "$pName"');
+        yamlBuffer.writeln('    type: $protoClean');
         yamlBuffer.writeln('    server: 127.0.0.1');
         yamlBuffer.writeln('    port: ${s['port']}');
         yamlBuffer.writeln('    udp: ${s['udp'] == true}');
       }
-      await File('output/mihomo_proxies.yaml').writeAsString(yamlBuffer.toString());
+      final proxyProviderContent = yamlBuffer.toString();
+      await File('output/clash/proxy_provider.yaml').writeAsString(proxyProviderContent);
+      await File('output/proxy_provider.yaml').writeAsString(proxyProviderContent); // Root mirror
 
-      // 2. raw_configs.txt
+      // Full Clash 32-Group Configuration
+      final fullClashBuffer = StringBuffer();
+      fullClashBuffer.writeln('mixed-port: 7890');
+      fullClashBuffer.writeln('allow-lan: false');
+      fullClashBuffer.writeln('mode: rule');
+      fullClashBuffer.writeln('log-level: info');
+      fullClashBuffer.writeln('ipv6: false');
+      fullClashBuffer.writeln('dns:');
+      fullClashBuffer.writeln('  enable: true');
+      fullClashBuffer.writeln('  enhanced-mode: fake-ip');
+      fullClashBuffer.writeln('  fake-ip-range: 198.18.0.1/16');
+      fullClashBuffer.writeln('  nameserver:');
+      fullClashBuffer.writeln('    - https://dns.cloudflare.com/dns-query');
+      fullClashBuffer.writeln('    - https://dns.google/dns-query');
+      fullClashBuffer.writeln(proxyProviderContent);
+      fullClashBuffer.writeln('proxy-groups:');
+      fullClashBuffer.writeln('  - name: "🚀 انتخاب خودکار (کمترین پینگ)"');
+      fullClashBuffer.writeln('    type: url-test');
+      fullClashBuffer.writeln('    url: http://cp.cloudflare.com/generate_204');
+      fullClashBuffer.writeln('    interval: 180');
+      fullClashBuffer.writeln('    tolerance: 50');
+      fullClashBuffer.writeln('    proxies:');
+      for (final pn in (proxyNames.isNotEmpty ? proxyNames : ['DIRECT'])) {
+        fullClashBuffer.writeln('      - "$pn"');
+      }
+      fullClashBuffer.writeln('  - name: "🔰 دستی / انتخاب پروکسی"');
+      fullClashBuffer.writeln('    type: select');
+      fullClashBuffer.writeln('    proxies:');
+      fullClashBuffer.writeln('      - "🚀 انتخاب خودکار (کمترین پینگ)"');
+      for (final pn in (proxyNames.isNotEmpty ? proxyNames : ['DIRECT'])) {
+        fullClashBuffer.writeln('      - "$pn"');
+      }
+      fullClashBuffer.writeln('      - DIRECT');
+      fullClashBuffer.writeln('rules:');
+      fullClashBuffer.writeln('  - DOMAIN-SUFFIX,gemini.google.com,🚀 انتخاب خودکار (کمترین پینگ)');
+      fullClashBuffer.writeln('  - DOMAIN-SUFFIX,generativelanguage.googleapis.com,🚀 انتخاب خودکار (کمترین پینگ)');
+      fullClashBuffer.writeln('  - DOMAIN-SUFFIX,t.me,🚀 انتخاب خودکار (کمترین پینگ)');
+      fullClashBuffer.writeln('  - DOMAIN-SUFFIX,telegram.org,🚀 انتخاب خودکار (کمترین پینگ)');
+      fullClashBuffer.writeln('  - GEOIP,IR,DIRECT');
+      fullClashBuffer.writeln('  - MATCH,🔰 دستی / انتخاب پروکسی');
+      final fullClashContent = fullClashBuffer.toString();
+      await File('output/clash/clash_full.yaml').writeAsString(fullClashContent);
+      await File('output/clash_full.yaml').writeAsString(fullClashContent);
+
+      // 2. Xray Outputs (output/xray/raw_links.txt & sub_base64.txt)
       final rawBuffer = StringBuffer();
       for (final s in _survivors) {
-        rawBuffer.writeln('${s['proto'].toString().toLowerCase()}://example#${Uri.encodeComponent(s['name'])}');
+        final protoLower = s['proto'].toString().toLowerCase().replaceAll(RegExp(r'\s+.*'), '');
+        rawBuffer.writeln('$protoLower://example@127.0.0.1:${s['port']}#${Uri.encodeComponent(s['name'])}');
       }
-      await File('output/raw_configs.txt').writeAsString(rawBuffer.toString());
+      final rawLinksContent = rawBuffer.toString();
+      await File('output/xray/raw_links.txt').writeAsString(rawLinksContent);
+      await File('output/raw_links.txt').writeAsString(rawLinksContent);
+      final b64Sub = base64.encode(utf8.encode(rawLinksContent));
+      await File('output/xray/sub_base64.txt').writeAsString(b64Sub);
+      await File('output/sub_base64.txt').writeAsString(b64Sub);
 
-      // 3. summary.json
+      // 3. Sing-box Outputs (output/singbox/singbox_outbounds.json & singbox_full.json)
+      final outboundsList = _survivors.map((s) => {
+        'type': s['proto'].toString().toLowerCase().replaceAll(RegExp(r'\s+.*'), ''),
+        'tag': s['name'],
+        'server': '127.0.0.1',
+        'server_port': s['port'],
+      }).toList();
+      final outboundsJson = const JsonEncoder.withIndent('  ').convert({'outbounds': outboundsList});
+      await File('output/singbox/singbox_outbounds.json').writeAsString(outboundsJson);
+      await File('output/singbox_outbounds.json').writeAsString(outboundsJson);
+
+      final fullSingbox = {
+        'log': {'level': 'info'},
+        'inbounds': [
+          {'type': 'mixed', 'tag': 'mixed-in', 'listen': '127.0.0.1', 'listen_port': 2080}
+        ],
+        'outbounds': [
+          {'type': 'urltest', 'tag': '🚀 انتخاب خودکار (کمترین پینگ)', 'outbounds': proxyNames, 'url': 'http://cp.cloudflare.com/generate_204'},
+          {'type': 'selector', 'tag': '🔰 دستی / انتخاب پروکسی', 'outbounds': ['🚀 انتخاب خودکار (کمترین پینگ)'] + proxyNames + ['direct']},
+          {'type': 'direct', 'tag': 'direct'},
+          ...outboundsList,
+        ]
+      };
+      await File('output/singbox/singbox_full.json').writeAsString(const JsonEncoder.withIndent('  ').convert(fullSingbox));
+
+      // 4. Telegram Proxies (output/telegram/telegram_proxies.txt)
+      final tgBuffer = StringBuffer();
+      for (final s in _survivors.where((x) => x['proto'].toString().contains('tg') || x['proto'].toString().contains('MTProto'))) {
+        tgBuffer.writeln('tg://proxy?server=127.0.0.1&port=${s['port']}&secret=ee00112233445566778899aabbccddeeff');
+      }
+      await File('output/telegram/telegram_proxies.txt').writeAsString(tgBuffer.toString());
+
+      // 5. DNS Tunnels (output/dns_tunnels/white_dns_soar.txt & dns_tunnels.txt)
+      final dnsBuffer = StringBuffer();
+      final soarBuffer = StringBuffer();
+      for (final s in _survivors.where((x) => x['proto'].toString().contains('DNS') || x['proto'].toString().contains('soar'))) {
+        dnsBuffer.writeln(s['name']);
+        if (s['proto'].toString().contains('soar')) {
+          soarBuffer.writeln(s['name']);
+        }
+      }
+      await File('output/dns_tunnels/dns_tunnels.txt').writeAsString(dnsBuffer.toString());
+      await File('output/dns_tunnels/white_dns_soar.txt').writeAsString(soarBuffer.toString());
+
+      // 6. Summary Metadata (output/summary.json)
       final summary = {
         'timestamp': DateTime.now().toIso8601String(),
         'found_count': _foundCount,
@@ -694,10 +799,17 @@ class ConfigService extends ChangeNotifier {
         'protocol_stats': _aliveStats,
         'transport_stats': _transportStats,
         'security_stats': _securityStats,
+        'folders': {
+          'clash': ['output/clash/proxy_provider.yaml', 'output/clash/clash_full.yaml'],
+          'singbox': ['output/singbox/singbox_outbounds.json', 'output/singbox/singbox_full.json'],
+          'xray': ['output/xray/raw_links.txt', 'output/xray/sub_base64.txt'],
+          'telegram': ['output/telegram/telegram_proxies.txt'],
+          'dns_tunnels': ['output/dns_tunnels/white_dns_soar.txt', 'output/dns_tunnels/dns_tunnels.txt'],
+        }
       };
       await File('output/summary.json').writeAsString(const JsonEncoder.withIndent('  ').convert(summary));
 
-      addLog('فایل‌های خروجی با موفقیت در پوشه output/ ایجاد شدند.', source: 'صدور خودکار', type: LogType.success);
+      addLog('تمامی فایل‌های خروجی در پوشه‌های تفکیک‌شده (clash, singbox, xray, telegram, dns_tunnels) با موفقیت تولید شدند.', source: 'صدور خودکار', type: LogType.success);
     } catch (e) {
       addLog('خطا در صدور خودکار فایل‌ها: $e', source: 'صدور خودکار', type: LogType.error);
     }
@@ -760,11 +872,10 @@ class ConfigService extends ChangeNotifier {
     _foundStats['ShadowTLS v2/v3'] = 18;
     _foundStats['Snell v1-v5'] = 12;
     // DNS Tunnels
-    _foundStats['WhiteDNS SOAR (soar://)'] = 24;
+    _foundStats['وایت دی‌ان‌اس SOAR (soar://)'] = 24;
     _foundStats['CottenDNS (cottendns://)'] = 18;
     _foundStats['DNSTT (SlowDNS)'] = 32;
     _foundStats['SlipNet / Slipstream'] = 14;
-    _foundStats['DNS over HTTPS (DoH)'] = 15;
     _foundStats['SSH over DNS (ssh-dns)'] = 10;
     // Telegram
     _foundStats['MTProto (tg://proxy)'] = 38;
@@ -825,11 +936,10 @@ class ConfigService extends ChangeNotifier {
     _aliveStats['ShadowTLS v2/v3'] = 4;
     _aliveStats['Snell v1-v5'] = 2;
     // DNS Tunnels
-    _aliveStats['WhiteDNS SOAR (soar://)'] = 14;
+    _aliveStats['وایت دی‌ان‌اس SOAR (soar://)'] = 14;
     _aliveStats['CottenDNS (cottendns://)'] = 10;
     _aliveStats['DNSTT (SlowDNS)'] = 12;
     _aliveStats['SlipNet / Slipstream'] = 6;
-    _aliveStats['DNS over HTTPS (DoH)'] = 8;
     _aliveStats['SSH over DNS (ssh-dns)'] = 4;
     // Telegram
     _aliveStats['MTProto (tg://proxy)'] = 18;
@@ -912,7 +1022,7 @@ class ConfigService extends ChangeNotifier {
       },
       {
         'name': '⚡ WhiteDNS SOAR | Public Server',
-        'proto': 'WhiteDNS SOAR (soar://)',
+        'proto': 'وایت دی‌ان‌اس SOAR (soar://)',
         'port': 53,
         'transport': 'DNS Tunnel',
         'security': 'WhiteDNS Curve',

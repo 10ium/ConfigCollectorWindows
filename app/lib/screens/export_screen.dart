@@ -92,8 +92,18 @@ class _ExportScreenState extends State<ExportScreen> {
   }
 
   void _saveFilters() {
+    _autoSaveQuietly();
     final isPersian = Localizations.localeOf(context).languageCode == 'fa';
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(isPersian ? 'تنظیمات فیلترهای خروجی با موفقیت ذخیره شد.' : 'Output settings saved successfully.'),
+        backgroundColor: Colors.green,
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
 
+  void _autoSaveQuietly() {
     _config.updateSetting('output_filters', 'export_type', _mihomoExportType);
     _config.updateSetting('output_filters', 'total_max_proxies', _totalMaxProxies);
     _config.updateSetting('output_filters', 'total_max_unlimited', _totalMaxUnlimited);
@@ -109,53 +119,35 @@ class _ExportScreenState extends State<ExportScreen> {
     _config.updateSetting('quiet_hours', 'end_time', _quietEndCtrl.text.trim());
 
     _config.saveSettings();
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(isPersian ? 'تنظیمات فیلترهای خروجی با موفقیت ذخیره شد.' : 'Output settings saved successfully.'),
-        backgroundColor: Colors.green,
-      ),
-    );
   }
 
-  void _generateExportFiles() async {
+  void _resetToDefaults() {
     final isPersian = Localizations.localeOf(context).languageCode == 'fa';
-
-    try {
-      final outDir = Directory('output');
-      if (!outDir.existsSync()) outDir.createSync(recursive: true);
-
-      final clashDir = Directory('output/clash');
-      if (!clashDir.existsSync()) clashDir.createSync(recursive: true);
-
-      final xrayDir = Directory('output/xray');
-      if (!xrayDir.existsSync()) xrayDir.createSync(recursive: true);
-
-      final singboxDir = Directory('output/singbox');
-      if (!singboxDir.existsSync()) singboxDir.createSync(recursive: true);
-
-      // Generate Clash output based on selected export type
-      if (_mihomoExportType == 'full_config') {
-        File('output/clash/config.yaml').writeAsStringSync(
-          'port: 7890\nsocks-port: 7891\nmixed-port: 7892\nmode: rule\nlog-level: info\nexternal-controller: 127.0.0.1:9090\nproxies:\n  - name: "sample-vless"\n    type: vless\n    server: 1.1.1.1\n    port: 443\nproxy-groups:\n  - name: "🚀 انتخاب خودکار"\n    type: url-test\n    url: http://www.gstatic.com/generate_204\n    interval: 300\n    proxies:\n      - sample-vless\nrules:\n  - MATCH,🚀 انتخاب خودکار\n',
-        );
+    setState(() {
+      _mihomoExportType = 'full_config';
+      _totalMaxProxies = 600;
+      _totalMaxUnlimited = false;
+      _minScore = 0.0;
+      _onlyGemini = false;
+      _filterPreviouslySent = false;
+      _protocolPriority = List.from(ConfigService.allCategorizedProtocols);
+      _protocolLimits = {};
+      for (final p in _protocolPriority) {
+        _protocolLimits[p] = (p == 'VLESS' || p == 'Hysteria 2') ? 100 : ((p == 'Trojan') ? 80 : ((p == 'VMess') ? 60 : 0));
       }
-      File('output/clash/proxies.yaml').writeAsStringSync('proxies:\n  - name: "sample-vless"\n    type: vless\n    server: 1.1.1.1\n    port: 443\n');
-      File('output/xray/all_raw.txt').writeAsStringSync('vless://sample@1.1.1.1:443?security=reality#Sample\n');
-      File('output/xray/all_base64.txt').writeAsStringSync('ZG14bGMzTXZMM1YyY21scFpUMHhibXN2YTI5eQ==\n');
-      File('output/singbox/outbounds.json').writeAsStringSync('{\n  "outbounds": []\n}\n');
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(isPersian ? 'تمام فایل‌های خروجی در پوشه output/ ایجاد شدند.' : 'Files exported to output/ successfully.'),
-          backgroundColor: Colors.green,
-        ),
-      );
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
-      );
-    }
+      _minimizeToTray = true;
+      _quietHoursEnabled = false;
+      _quietStartCtrl.text = '23:00';
+      _quietEndCtrl.text = '07:00';
+    });
+    _autoSaveQuietly();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(isPersian ? 'تنظیمات فیلترها و اولویت‌ها به حالت پیش‌فرض بازگشت.' : 'Filters & priorities reset to defaults.'),
+        backgroundColor: Colors.blueAccent,
+        duration: const Duration(seconds: 2),
+      ),
+    );
   }
 
   @override
@@ -166,10 +158,16 @@ class _ExportScreenState extends State<ExportScreen> {
       appBar: AppBar(
         title: Text(isPersian ? 'خروجی‌ها، اولویت‌بندی و سقف پروتکل‌ها' : 'Exports, Priority & Protocol Caps'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.restart_alt),
+            tooltip: isPersian ? 'بازگردانی به مقادیر پیش‌فرض' : 'Reset to Defaults',
+            onPressed: _resetToDefaults,
+          ),
+          const SizedBox(width: 8),
           FilledButton.icon(
             onPressed: _saveFilters,
             icon: const Icon(Icons.save),
-            label: Text(isPersian ? 'ذخیره فیلترها' : 'Save Filters'),
+            label: Text(isPersian ? 'ذخیره دستی' : 'Save'),
           ),
           const SizedBox(width: 16),
         ],
@@ -194,16 +192,16 @@ class _ExportScreenState extends State<ExportScreen> {
                   Expanded(
                     child: Text(
                       isPersian
-                          ? 'نرم‌افزار خروجی‌ها را همزمان در فرمت‌های استاندارد کلش، ایکس‌ری راو، بیس‌۶۴ و سینگ‌باکس در پوشه‌های تفکیک‌شده تولید می‌کند.'
-                          : 'Generates exports in Clash, Xray Raw, Base64, and Sing-box formats simultaneously in organized folders.',
+                          ? 'تولید خروجی‌ها ۱۰۰٪ خودکار است: پس از پایان هر چرخه آزمون، فایل‌های خروجی در پوشه‌های تفکیک‌شده (output/clash/, output/singbox/, output/xray/, output/telegram/, output/dns_tunnels/) ساخته و ذخیره می‌شوند.'
+                          : 'Automatic exports: Output files are saved into dedicated folders (output/clash/, output/singbox/, output/xray/, output/telegram/, output/dns_tunnels/) automatically when tests complete.',
                       style: TextStyle(color: Colors.grey.shade300, fontSize: 13),
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  FilledButton.tonalIcon(
-                    onPressed: _generateExportFiles,
-                    icon: const Icon(Icons.download),
-                    label: Text(isPersian ? 'تولید فایل‌های خروجی' : 'Generate Exports'),
+                  const SizedBox(width: 12),
+                  OutlinedButton.icon(
+                    onPressed: () => _config.openOutputFolder(),
+                    icon: const Icon(Icons.folder_open),
+                    label: Text(isPersian ? 'باز کردن پوشه خروجی‌ها' : 'Open Output Folder'),
                   ),
                 ],
               ),
@@ -245,7 +243,10 @@ class _ExportScreenState extends State<ExportScreen> {
                     ),
                     value: 'full_config',
                     groupValue: _mihomoExportType,
-                    onChanged: (v) => setState(() => _mihomoExportType = v!),
+                    onChanged: (v) {
+                      setState(() => _mihomoExportType = v!);
+                      _autoSaveQuietly();
+                    },
                   ),
                   RadioListTile<String>(
                     title: Text(isPersian ? '۲. پروکسی پروایدر (Proxy Provider YAML)' : '2. Proxy Provider YAML'),
@@ -257,7 +258,10 @@ class _ExportScreenState extends State<ExportScreen> {
                     ),
                     value: 'proxy_provider',
                     groupValue: _mihomoExportType,
-                    onChanged: (v) => setState(() => _mihomoExportType = v!),
+                    onChanged: (v) {
+                      setState(() => _mihomoExportType = v!);
+                      _autoSaveQuietly();
+                    },
                   ),
                   const SizedBox(height: 12),
                   // Total Maximum Cap for Mihomo Config
@@ -279,7 +283,10 @@ class _ExportScreenState extends State<ExportScreen> {
                                 max: 2000,
                                 divisions: 39,
                                 value: _totalMaxProxies.toDouble(),
-                                onChanged: (v) => setState(() => _totalMaxProxies = v.toInt()),
+                                onChanged: (v) {
+                                  setState(() => _totalMaxProxies = v.toInt());
+                                  _autoSaveQuietly();
+                                },
                               ),
                           ],
                         ),
@@ -288,7 +295,10 @@ class _ExportScreenState extends State<ExportScreen> {
                       FilterChip(
                         label: Text(isPersian ? 'تعداد نامحدود' : 'Unlimited'),
                         selected: _totalMaxUnlimited,
-                        onSelected: (val) => setState(() => _totalMaxUnlimited = val),
+                        onSelected: (val) {
+                          setState(() => _totalMaxUnlimited = val);
+                          _autoSaveQuietly();
+                        },
                       ),
                     ],
                   ),
@@ -372,6 +382,7 @@ class _ExportScreenState extends State<ExportScreen> {
                           final item = _protocolPriority.removeAt(oldIndex);
                           _protocolPriority.insert(newIndex, item);
                         });
+                        _autoSaveQuietly();
                       },
                       itemBuilder: (context, index) {
                         final proto = _protocolPriority[index];
@@ -459,6 +470,7 @@ class _ExportScreenState extends State<ExportScreen> {
                                     setState(() {
                                       _protocolLimits[proto] = parsed;
                                     });
+                                    _autoSaveQuietly();
                                   },
                                 ),
                               ),
@@ -498,19 +510,28 @@ class _ExportScreenState extends State<ExportScreen> {
                     max: 100,
                     divisions: 20,
                     value: _minScore,
-                    onChanged: (v) => setState(() => _minScore = v),
+                    onChanged: (v) {
+                      setState(() => _minScore = v);
+                      _autoSaveQuietly();
+                    },
                   ),
                   SwitchListTile(
                     title: Text(isPersian ? 'فقط کانفیگ‌های تاییدشده توسط هوش مصنوعی جمنای' : 'Only Gemini Passed Configs'),
                     subtitle: Text(isPersian ? 'صرفاً پروکسی‌هایی که توانسته‌اند با موفقیت سایت یا API جمنای را باز کنند' : 'Only include proxies passing Google Gemini test'),
                     value: _onlyGemini,
-                    onChanged: (v) => setState(() => _onlyGemini = v),
+                    onChanged: (v) {
+                      setState(() => _onlyGemini = v);
+                      _autoSaveQuietly();
+                    },
                   ),
                   SwitchListTile(
                     title: Text(isPersian ? 'حافظه عدم تکرار (عدم ارسال مجدد کانفیگ‌های تکراری)' : 'Deduplication Memory'),
                     subtitle: Text(isPersian ? 'کانفیگ‌هایی که در دوره‌های قبلی ارسال شده‌اند را نادیده بگیرد' : 'Skip proxies sent in previous sessions'),
                     value: _filterPreviouslySent,
-                    onChanged: (v) => setState(() => _filterPreviouslySent = v),
+                    onChanged: (v) {
+                      setState(() => _filterPreviouslySent = v);
+                      _autoSaveQuietly();
+                    },
                   ),
                 ],
               ),
@@ -545,7 +566,10 @@ class _ExportScreenState extends State<ExportScreen> {
                       style: TextStyle(color: Colors.grey.shade400, fontSize: 12),
                     ),
                     value: _minimizeToTray,
-                    onChanged: (v) => setState(() => _minimizeToTray = v),
+                    onChanged: (v) {
+                      setState(() => _minimizeToTray = v);
+                      _autoSaveQuietly();
+                    },
                   ),
                   SwitchListTile(
                     title: Text(isPersian ? 'فعال‌سازی ساعت سکوت (Quiet Hours)' : 'Enable Quiet Hours'),
@@ -554,7 +578,10 @@ class _ExportScreenState extends State<ExportScreen> {
                       style: TextStyle(color: Colors.grey.shade400, fontSize: 12),
                     ),
                     value: _quietHoursEnabled,
-                    onChanged: (v) => setState(() => _quietHoursEnabled = v),
+                    onChanged: (v) {
+                      setState(() => _quietHoursEnabled = v);
+                      _autoSaveQuietly();
+                    },
                   ),
                   if (_quietHoursEnabled) ...[
                     const SizedBox(height: 12),
@@ -563,6 +590,7 @@ class _ExportScreenState extends State<ExportScreen> {
                         Expanded(
                           child: TextField(
                             controller: _quietStartCtrl,
+                            onChanged: (_) => _autoSaveQuietly(),
                             decoration: InputDecoration(
                               border: const OutlineInputBorder(),
                               labelText: isPersian ? 'شروع سکوت (مثلاً ۲۳:۰۰)' : 'Start Time (e.g. 23:00)',
@@ -573,6 +601,7 @@ class _ExportScreenState extends State<ExportScreen> {
                         Expanded(
                           child: TextField(
                             controller: _quietEndCtrl,
+                            onChanged: (_) => _autoSaveQuietly(),
                             decoration: InputDecoration(
                               border: const OutlineInputBorder(),
                               labelText: isPersian ? 'پایان سکوت (مثلاً ۰۷:۰۰)' : 'End Time (e.g. 07:00)',
